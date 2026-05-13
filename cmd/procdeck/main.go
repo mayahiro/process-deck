@@ -14,6 +14,7 @@ import (
 
 	"github.com/mayahiro/process-deck/internal/config"
 	"github.com/mayahiro/process-deck/internal/supervisor"
+	"github.com/mayahiro/process-deck/internal/tui"
 )
 
 var version = "dev"
@@ -92,7 +93,12 @@ func run(args []string, stdout io.Writer, stderr io.Writer) error {
 		}
 		return runHeadless(ctx, stdout, stderr, cfg, baseDir)
 	}
-	return fmt.Errorf("runtime error: TUI mode is not implemented in phase 2; use --no-tui or --dry-run")
+
+	baseDir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("runtime error: failed to get working directory: %w", err)
+	}
+	return tui.Run(cfg, baseDir)
 }
 
 func printDryRun(w io.Writer, configPath string, cfg *config.Config, deps map[string][]string) error {

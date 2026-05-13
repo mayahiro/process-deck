@@ -46,6 +46,7 @@ type Supervisor struct {
 	deps    map[string][]string
 
 	mu        sync.Mutex
+	runCtx    context.Context
 	processes map[string]*processRuntime
 	events    chan Event
 	done      chan struct{}
@@ -103,6 +104,10 @@ func (s *Supervisor) Events() <-chan Event {
 func (s *Supervisor) Run(ctx context.Context) error {
 	defer close(s.events)
 
+	s.mu.Lock()
+	s.runCtx = ctx
+	s.mu.Unlock()
+
 	if err := s.startInitial(ctx); err != nil {
 		return err
 	}
@@ -122,6 +127,71 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		s.emitStopped()
 		return nil
 	}
+}
+
+func (s *Supervisor) StartProcess(name string) error {
+	ctx, err := s.commandContext()
+	if err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	runtime := s.processes[name]
+	if runtime == nil {
+		s.mu.Unlock()
+		return fmt.Errorf("runtime error: unknown process %s", name)
+	}
+	if !terminalState(runtime.state) && runtime.state != StatePending {
+		s.mu.Unlock()
+		return fmt.Errorf("runtime error: process %s is already %s", name, runtime.state)
+	}
+	if !s.dependenciesReadyLocked(name) {
+		s.mu.Unlock()
+		return fmt.Errorf("runtime error: process %s dependencies are not ready", name)
+	}
+	runtime.reachedRunning = false
+	s.mu.Unlock()
+
+	if err := s.startProcess(ctx, name); err != nil {
+		s.markStartFailed(name, err)
+		return err
+	}
+	return nil
+}
+
+func (s *Supervisor) StopProcess(name string) error {
+	s.mu.Lock()
+	runtime := s.processes[name]
+	if runtime == nil {
+		s.mu.Unlock()
+		return fmt.Errorf("runtime error: unknown process %s", name)
+	}
+	runtime.stopRequested = true
+	runtime.restarting = false
+	runner := runtime.runner
+	if runner != nil && runtime.state == StateRunning {
+		s.setStateLocked(runtime, StateStopping)
+	}
+	if runner == nil && (runtime.state == StatePending || runtime.state == StateStarting) {
+		s.setStateLocked(runtime, StateExited)
+		s.checkDoneLocked()
+	}
+	s.mu.Unlock()
+
+	if runner != nil {
+		if err := runner.Stop(); err != nil {
+			return err
+		}
+		s.waitForTerminal(name)
+	}
+	return nil
+}
+
+func (s *Supervisor) RestartProcess(name string) error {
+	if err := s.StopProcess(name); err != nil {
+		return err
+	}
+	return s.StartProcess(name)
 }
 
 func (s *Supervisor) StopAll() error {
@@ -376,6 +446,10 @@ func (s *Supervisor) dependenciesReady(name string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	return s.dependenciesReadyLocked(name)
+}
+
+func (s *Supervisor) dependenciesReadyLocked(name string) bool {
 	for _, dep := range s.deps[name] {
 		runtime := s.processes[dep]
 		if runtime.state == StateSkipped || (!runtime.reachedRunning && runtime.state == StateFailed) {
@@ -486,6 +560,34 @@ func (s *Supervisor) emit(event Event) {
 
 func (s *Supervisor) emitLocked(event Event) {
 	s.events <- event
+}
+
+func (s *Supervisor) commandContext() (context.Context, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.runCtx == nil {
+		return nil, fmt.Errorf("runtime error: supervisor is not running")
+	}
+	if err := s.runCtx.Err(); err != nil {
+		return nil, err
+	}
+	return s.runCtx, nil
+}
+
+func (s *Supervisor) waitForTerminal(name string) {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		s.mu.Lock()
+		runtime := s.processes[name]
+		done := runtime == nil || (runtime.runner == nil && terminalState(runtime.state))
+		s.mu.Unlock()
+		if done {
+			return
+		}
+	}
 }
 
 func resolveCWD(baseDir string, cwd string) string {

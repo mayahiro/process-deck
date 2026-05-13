@@ -90,6 +90,46 @@ func TestRunRestartsOnFailureUntilStopped(t *testing.T) {
 	}
 }
 
+func TestStopProcessSuppressesRestart(t *testing.T) {
+	cfg := testConfig(map[string]config.Process{
+		"server": {
+			Cmd:         "trap 'exit 0' TERM; while true; do sleep 1; done",
+			Restart:     "always",
+			StopTimeout: "1s",
+		},
+	})
+
+	sup, err := New(cfg, Options{})
+	if err != nil {
+		t.Fatalf("New() error = %v, want nil", err)
+	}
+
+	ctx := context.Background()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- sup.Run(ctx)
+	}()
+
+	var events []Event
+	stopped := false
+	for event := range sup.Events() {
+		events = append(events, event)
+		if event.Kind == EventProcessStarted && !stopped {
+			stopped = true
+			if err := sup.StopProcess("server"); err != nil {
+				t.Fatalf("StopProcess() error = %v, want nil", err)
+			}
+		}
+	}
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("Run() error = %v, want nil", err)
+	}
+	if hasEventKind(events, EventProcessRestartScheduled, "server") {
+		t.Fatalf("manual stop triggered restart; events = %#v", events)
+	}
+}
+
 func runSupervisor(t *testing.T, cfg *config.Config, timeout time.Duration) ([]Event, error) {
 	t.Helper()
 

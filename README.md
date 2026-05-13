@@ -43,6 +43,12 @@ Validate it and inspect the startup plan:
 go run ./cmd/procdeck --dry-run --config process-deck.yaml
 ```
 
+Start the TUI:
+
+```sh
+go run ./cmd/procdeck --config process-deck.yaml
+```
+
 Run it without the TUI:
 
 ```sh
@@ -62,9 +68,7 @@ Process Deck uses schema `version: 1`. Each process must define exactly one of `
 
 Process Deck currently targets macOS.
 
-## Planned Keybindings
-
-The MVP TUI is planned around these keys:
+## Keybindings
 
 | Key | Action |
 |---|---|
