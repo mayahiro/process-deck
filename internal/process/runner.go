@@ -18,6 +18,7 @@ type Spec struct {
 	Cmd         string
 	Exec        []string
 	CWD         string
+	EnvFiles    []string
 	Env         map[string]string
 	StopSignal  os.Signal
 	StopTimeout time.Duration
@@ -156,14 +157,25 @@ func buildCommand(spec Spec) (*exec.Cmd, error) {
 		cmd = exec.Command(spec.Exec[0], spec.Exec[1:]...)
 	}
 	cmd.Dir = spec.CWD
-	cmd.Env = buildEnv(spec.Env)
+	env, err := buildEnv(spec.CWD, spec.EnvFiles, spec.Env)
+	if err != nil {
+		return nil, err
+	}
+	cmd.Env = env
 	return cmd, nil
 }
 
-func buildEnv(env map[string]string) []string {
+func buildEnv(cwd string, envFiles []string, env map[string]string) ([]string, error) {
 	values := os.Environ()
+	for _, path := range envFiles {
+		entries, err := readEnvFile(resolveEnvFilePath(cwd, path))
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, entries...)
+	}
 	if len(env) == 0 {
-		return values
+		return values, nil
 	}
 
 	keys := make([]string, 0, len(env))
@@ -174,7 +186,7 @@ func buildEnv(env map[string]string) []string {
 	for _, key := range keys {
 		values = append(values, key+"="+env[key])
 	}
-	return values
+	return values, nil
 }
 
 func scanLines(wg *sync.WaitGroup, r io.Reader, stream string, logs chan<- LogLine) {

@@ -62,6 +62,7 @@ Process Deck uses schema `version: 1`. Each process must define exactly one of `
 
 - `cmd` runs through `/bin/sh -c`.
 - `exec` runs an executable directly without shell expansion.
+- `env_file` loads one or more `KEY=VALUE` environment files relative to the process `cwd`.
 - `depends_on` waits for listed processes to reach the running state before starting the dependent process.
 - `restart` supports `no`, `on-failure`, and `always`.
 - `stop_signal` defaults to `TERM`.
@@ -69,6 +70,8 @@ Process Deck uses schema `version: 1`. Each process must define exactly one of `
 - `log_buffer_lines` controls how many in-memory log lines are retained per process.
 
 Process Deck currently targets macOS.
+
+See [Configuration](docs/configuration.md) for the complete YAML schema, field semantics, and environment manager notes.
 
 ## Commands
 

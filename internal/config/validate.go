@@ -69,6 +69,11 @@ func validateProcess(name string, process Process) error {
 			return fmt.Errorf("config error: processes.%s.env key %q must not contain =", name, key)
 		}
 	}
+	for i, path := range process.EnvFile {
+		if strings.TrimSpace(path) == "" {
+			return fmt.Errorf("config error: processes.%s.env_file[%d] must not be empty", name, i)
+		}
+	}
 	if err := validateRestart("processes."+name+".restart", process.Restart); err != nil {
 		return err
 	}

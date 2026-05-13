@@ -18,6 +18,41 @@ processes:
 	}
 }
 
+func TestDecodeAcceptsEnvFileScalarAndList(t *testing.T) {
+	scalar := strings.NewReader(`
+version: 1
+processes:
+  app:
+    cmd: "echo app"
+    env_file: .env
+`)
+	cfg, err := Decode(scalar)
+	if err != nil {
+		t.Fatalf("Decode() scalar error = %v, want nil", err)
+	}
+	if got := []string(cfg.Processes["app"].EnvFile); len(got) != 1 || got[0] != ".env" {
+		t.Fatalf("scalar env_file = %#v, want [.env]", got)
+	}
+
+	list := strings.NewReader(`
+version: 1
+processes:
+  app:
+    cmd: "echo app"
+    env_file:
+      - .env
+      - .env.local
+`)
+	cfg, err = Decode(list)
+	if err != nil {
+		t.Fatalf("Decode() list error = %v, want nil", err)
+	}
+	got := []string(cfg.Processes["app"].EnvFile)
+	if len(got) != 2 || got[0] != ".env" || got[1] != ".env.local" {
+		t.Fatalf("list env_file = %#v, want [.env .env.local]", got)
+	}
+}
+
 func TestValidateAcceptsValidConfig(t *testing.T) {
 	cfg := validConfig()
 	if err := cfg.Validate(); err != nil {
@@ -143,6 +178,15 @@ func TestValidateRejectsInvalidConfig(t *testing.T) {
 				cfg.Processes["app"] = process
 			},
 			wantErr: "processes.app.env key \"BAD=KEY\" must not contain =",
+		},
+		{
+			name: "empty env file",
+			mutate: func(cfg *Config) {
+				process := cfg.Processes["app"]
+				process.EnvFile = EnvFiles{""}
+				cfg.Processes["app"] = process
+			},
+			wantErr: "processes.app.env_file[0] must not be empty",
 		},
 		{
 			name: "negative log buffer",

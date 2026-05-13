@@ -517,6 +517,7 @@ func (s *Supervisor) processSpec(runtime *processRuntime) (process.Spec, error) 
 		Cmd:         runtime.config.Cmd,
 		Exec:        append([]string(nil), runtime.config.Exec...),
 		CWD:         resolveCWD(s.options.BaseDir, runtime.config.CWD),
+		EnvFiles:    append([]string(nil), runtime.config.EnvFile...),
 		Env:         cloneEnv(runtime.config.Env),
 		StopSignal:  sig,
 		StopTimeout: resolveStopTimeout(s.cfg.Defaults, runtime.config),

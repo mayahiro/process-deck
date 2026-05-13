@@ -37,6 +37,7 @@ type Process struct {
 	Cmd            string            `yaml:"cmd"`
 	Exec           []string          `yaml:"exec"`
 	CWD            string            `yaml:"cwd"`
+	EnvFile        EnvFiles          `yaml:"env_file"`
 	Env            map[string]string `yaml:"env"`
 	DependsOn      []string          `yaml:"depends_on"`
 	Restart        string            `yaml:"restart"`
