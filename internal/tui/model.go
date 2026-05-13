@@ -192,6 +192,13 @@ func (m *model) handleSupervisorEvent(event supervisor.Event) {
 		m.status = "stopped"
 	}
 	m.refreshSnapshots()
+	if !m.quitting && !m.stopped && m.allTerminal() {
+		if m.anyFailed() {
+			m.status = "one or more processes failed"
+		} else {
+			m.status = "all processes stopped"
+		}
+	}
 }
 
 func (m *model) refreshSnapshots() {
@@ -274,6 +281,29 @@ func (m model) footerText() string {
 		follow = "on"
 	}
 	return fmt.Sprintf("↑/k ↓/j select   s stop   a start   r restart   f follow:%s   q quit", follow)
+}
+
+func (m model) allTerminal() bool {
+	if len(m.snapshots) == 0 {
+		return false
+	}
+	for _, snapshot := range m.snapshots {
+		switch snapshot.State {
+		case supervisor.StateExited, supervisor.StateFailed, supervisor.StateSkipped:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func (m model) anyFailed() bool {
+	for _, snapshot := range m.snapshots {
+		if snapshot.State == supervisor.StateFailed || snapshot.State == supervisor.StateSkipped {
+			return true
+		}
+	}
+	return false
 }
 
 func waitForEvent(events <-chan supervisor.Event) tea.Cmd {

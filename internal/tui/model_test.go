@@ -50,3 +50,19 @@ func TestLogViewLinesEmpty(t *testing.T) {
 		t.Fatalf("logViewLines() = %#v, want %#v", got, want)
 	}
 }
+
+func TestTerminalStatusHelpers(t *testing.T) {
+	m := model{
+		snapshots: []supervisor.Snapshot{
+			{Name: "api", State: supervisor.StateExited},
+			{Name: "worker", State: supervisor.StateFailed},
+		},
+	}
+
+	if !m.allTerminal() {
+		t.Fatal("allTerminal() = false, want true")
+	}
+	if !m.anyFailed() {
+		t.Fatal("anyFailed() = false, want true")
+	}
+}

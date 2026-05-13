@@ -102,6 +102,13 @@ func TestValidateRejectsInvalidConfig(t *testing.T) {
 			wantErr: "defaults.backoff must be a valid duration",
 		},
 		{
+			name: "invalid default stop signal",
+			mutate: func(cfg *Config) {
+				cfg.Defaults.StopSignal = "USR1"
+			},
+			wantErr: "defaults.stop_signal must be one of",
+		},
+		{
 			name: "invalid process duration",
 			mutate: func(cfg *Config) {
 				process := cfg.Processes["app"]
@@ -109,6 +116,33 @@ func TestValidateRejectsInvalidConfig(t *testing.T) {
 				cfg.Processes["app"] = process
 			},
 			wantErr: "processes.app.stop_timeout must be a valid duration",
+		},
+		{
+			name: "invalid process stop signal",
+			mutate: func(cfg *Config) {
+				process := cfg.Processes["app"]
+				process.StopSignal = "USR1"
+				cfg.Processes["app"] = process
+			},
+			wantErr: "processes.app.stop_signal must be one of",
+		},
+		{
+			name: "empty env key",
+			mutate: func(cfg *Config) {
+				process := cfg.Processes["app"]
+				process.Env = map[string]string{"": "value"}
+				cfg.Processes["app"] = process
+			},
+			wantErr: "processes.app.env must not contain an empty key",
+		},
+		{
+			name: "env key containing equals",
+			mutate: func(cfg *Config) {
+				process := cfg.Processes["app"]
+				process.Env = map[string]string{"BAD=KEY": "value"}
+				cfg.Processes["app"] = process
+			},
+			wantErr: "processes.app.env key \"BAD=KEY\" must not contain =",
 		},
 		{
 			name: "negative log buffer",

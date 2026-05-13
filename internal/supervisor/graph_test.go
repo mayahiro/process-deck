@@ -34,6 +34,14 @@ func TestValidateGraphRejectsInvalidDependencies(t *testing.T) {
 			},
 			wantErr: "dependency cycle detected",
 		},
+		{
+			name: "duplicate dependency",
+			deps: map[string][]string{
+				"api": {"db", "db"},
+				"db":  nil,
+			},
+			wantErr: "depends on db more than once",
+		},
 	}
 
 	for _, tt := range tests {

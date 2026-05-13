@@ -172,6 +172,10 @@ func printHeadlessEvent(stdout io.Writer, stderr io.Writer, event supervisor.Eve
 		fmt.Fprintf(stdout, "[%s %s] %s\n", event.Process, event.Stream, event.Line)
 	case supervisor.EventProcessRestartScheduled:
 		fmt.Fprintf(stderr, "[%s] restart scheduled\n", event.Process)
+	case supervisor.EventProcessExited:
+		if event.ExitCode != nil && *event.ExitCode != 0 {
+			fmt.Fprintf(stderr, "[%s] exited with code %d\n", event.Process, *event.ExitCode)
+		}
 	case supervisor.EventProcessSkipped:
 		fmt.Fprintf(stderr, "[%s] skipped\n", event.Process)
 	case supervisor.EventSupervisorError:

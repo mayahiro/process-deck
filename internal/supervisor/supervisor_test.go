@@ -130,6 +130,42 @@ func TestStopProcessSuppressesRestart(t *testing.T) {
 	}
 }
 
+func TestRunCanStayOpenAfterAllProcessesExit(t *testing.T) {
+	cfg := testConfig(map[string]config.Process{
+		"one": {
+			Cmd: "echo one",
+		},
+	})
+
+	sup, err := New(cfg, Options{KeepRunningWhenDone: true})
+	if err != nil {
+		t.Fatalf("New() error = %v, want nil", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- sup.Run(ctx)
+	}()
+
+	var events []Event
+	for event := range sup.Events() {
+		events = append(events, event)
+	}
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("Run() error = %v, want nil", err)
+	}
+	if !hasEventKind(events, EventProcessExited, "one") {
+		t.Fatalf("missing process exited event in %#v", events)
+	}
+	if !hasEventKind(events, EventSupervisorStopped, "") {
+		t.Fatalf("missing supervisor stopped event in %#v", events)
+	}
+}
+
 func runSupervisor(t *testing.T, cfg *config.Config, timeout time.Duration) ([]Event, error) {
 	t.Helper()
 

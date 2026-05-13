@@ -4,6 +4,8 @@ project: demo
 
 defaults:
   restart: "no"
+  backoff: "1s"
+  stop_signal: "TERM"
   stop_timeout: "5s"
   log_buffer_lines: 500
 

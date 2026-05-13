@@ -6,10 +6,11 @@ It is designed for developers who want to start and monitor several local proces
 
 ## Installation
 
-Installation packaging is not published yet. For local development, run the CLI with Go:
+Build a local binary:
 
 ```sh
-go run ./cmd/procdeck --dry-run --config examples/process-deck.yaml
+make build
+./tmp/procdeck --version
 ```
 
 ## Quick Start
@@ -65,8 +66,22 @@ Process Deck uses schema `version: 1`. Each process must define exactly one of `
 - `restart` supports `no`, `on-failure`, and `always`.
 - `stop_signal` defaults to `TERM`.
 - `stop_timeout` defaults to `10s`.
+- `log_buffer_lines` controls how many in-memory log lines are retained per process.
 
 Process Deck currently targets macOS.
+
+## Commands
+
+```sh
+make fmt
+make test
+make test-race
+make build
+make release-darwin-arm64 VERSION=0.1.0
+make release-darwin-amd64 VERSION=0.1.0
+```
+
+Release builds write binaries to `tmp/` and embed the version shown by `procdeck --version`.
 
 ## Keybindings
 

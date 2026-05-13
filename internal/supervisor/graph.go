@@ -13,6 +13,7 @@ func ValidateGraph(deps map[string][]string) error {
 	}
 
 	for _, name := range names {
+		seenDeps := map[string]struct{}{}
 		for _, dep := range deps[name] {
 			if name == dep {
 				return fmt.Errorf("config error: process %s depends on itself", name)
@@ -20,6 +21,10 @@ func ValidateGraph(deps map[string][]string) error {
 			if _, ok := known[dep]; !ok {
 				return fmt.Errorf("config error: process %s depends on unknown process %s", name, dep)
 			}
+			if _, ok := seenDeps[dep]; ok {
+				return fmt.Errorf("config error: process %s depends on %s more than once", name, dep)
+			}
+			seenDeps[dep] = struct{}{}
 		}
 	}
 

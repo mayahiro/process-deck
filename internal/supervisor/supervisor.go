@@ -21,7 +21,8 @@ const (
 )
 
 type Options struct {
-	BaseDir string
+	BaseDir             string
+	KeepRunningWhenDone bool
 }
 
 type Snapshot struct {
@@ -47,6 +48,7 @@ type Supervisor struct {
 
 	mu        sync.Mutex
 	runCtx    context.Context
+	wg        sync.WaitGroup
 	processes map[string]*processRuntime
 	events    chan Event
 	done      chan struct{}
@@ -102,31 +104,34 @@ func (s *Supervisor) Events() <-chan Event {
 }
 
 func (s *Supervisor) Run(ctx context.Context) error {
-	defer close(s.events)
-
 	s.mu.Lock()
 	s.runCtx = ctx
 	s.mu.Unlock()
 
 	if err := s.startInitial(ctx); err != nil {
+		close(s.events)
 		return err
 	}
 
+	var err error
 	select {
 	case <-ctx.Done():
-		if err := s.StopAll(); err != nil {
-			return err
-		}
+		err = s.StopAll()
 		<-s.done
-		s.emitStopped()
-		return nil
 	case <-s.done:
-		if s.failed() {
-			return fmt.Errorf("runtime error: one or more processes failed")
+		if s.options.KeepRunningWhenDone {
+			<-ctx.Done()
+			err = s.StopAll()
+			<-s.done
+		} else if s.failed() {
+			err = fmt.Errorf("runtime error: one or more processes failed")
 		}
-		s.emitStopped()
-		return nil
 	}
+
+	s.wg.Wait()
+	s.emitStopped()
+	close(s.events)
+	return err
 }
 
 func (s *Supervisor) StartProcess(name string) error {
@@ -338,7 +343,11 @@ func (s *Supervisor) startProcess(ctx context.Context, name string) error {
 		s.forwardLogs(name, run.Logs)
 		close(logsDone)
 	}()
-	go s.waitProcess(ctx, name, run.Done, logsDone)
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.waitProcess(ctx, name, run.Done, logsDone)
+	}()
 	return nil
 }
 

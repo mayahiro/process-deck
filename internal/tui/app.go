@@ -11,7 +11,10 @@ import (
 )
 
 func Run(cfg *config.Config, baseDir string) error {
-	sup, err := supervisor.New(cfg, supervisor.Options{BaseDir: baseDir})
+	sup, err := supervisor.New(cfg, supervisor.Options{
+		BaseDir:             baseDir,
+		KeepRunningWhenDone: true,
+	})
 	if err != nil {
 		return err
 	}
