@@ -43,14 +43,24 @@ Validate it and inspect the startup plan:
 go run ./cmd/procdeck --dry-run --config process-deck.yaml
 ```
 
+Run it without the TUI:
+
+```sh
+go run ./cmd/procdeck --no-tui --config process-deck.yaml
+```
+
 ## Configuration
 
 Process Deck uses schema `version: 1`. Each process must define exactly one of `cmd` or `exec`.
 
-- `cmd` runs through the platform shell.
+- `cmd` runs through `/bin/sh -c`.
 - `exec` runs an executable directly without shell expansion.
 - `depends_on` waits for listed processes to reach the running state before starting the dependent process.
 - `restart` supports `no`, `on-failure`, and `always`.
+- `stop_signal` defaults to `TERM`.
+- `stop_timeout` defaults to `10s`.
+
+Process Deck currently targets macOS.
 
 ## Planned Keybindings
 

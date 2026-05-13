@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/mayahiro/process-deck/internal/config"
 	"github.com/mayahiro/process-deck/internal/supervisor"
@@ -80,9 +83,16 @@ func run(args []string, stdout io.Writer, stderr io.Writer) error {
 		return printDryRun(stdout, configPath, cfg, deps)
 	}
 	if noTUI {
-		return fmt.Errorf("runtime error: --no-tui is not implemented in phase 1; use --dry-run")
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+
+		baseDir, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("runtime error: failed to get working directory: %w", err)
+		}
+		return runHeadless(ctx, stdout, stderr, cfg, baseDir)
 	}
-	return fmt.Errorf("runtime error: TUI mode is not implemented in phase 1; use --dry-run")
+	return fmt.Errorf("runtime error: TUI mode is not implemented in phase 2; use --no-tui or --dry-run")
 }
 
 func printDryRun(w io.Writer, configPath string, cfg *config.Config, deps map[string][]string) error {
@@ -131,4 +141,36 @@ func flattenLayers(layers [][]string) []string {
 		names = append(names, layer...)
 	}
 	return names
+}
+
+func runHeadless(ctx context.Context, stdout io.Writer, stderr io.Writer, cfg *config.Config, baseDir string) error {
+	sup, err := supervisor.New(cfg, supervisor.Options{BaseDir: baseDir})
+	if err != nil {
+		return err
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- sup.Run(ctx)
+	}()
+
+	for event := range sup.Events() {
+		printHeadlessEvent(stdout, stderr, event)
+	}
+	return <-errCh
+}
+
+func printHeadlessEvent(stdout io.Writer, stderr io.Writer, event supervisor.Event) {
+	switch event.Kind {
+	case supervisor.EventProcessLogLine:
+		fmt.Fprintf(stdout, "[%s %s] %s\n", event.Process, event.Stream, event.Line)
+	case supervisor.EventProcessRestartScheduled:
+		fmt.Fprintf(stderr, "[%s] restart scheduled\n", event.Process)
+	case supervisor.EventProcessSkipped:
+		fmt.Fprintf(stderr, "[%s] skipped\n", event.Process)
+	case supervisor.EventSupervisorError:
+		if event.Error != nil {
+			fmt.Fprintln(stderr, event.Error)
+		}
+	}
 }
