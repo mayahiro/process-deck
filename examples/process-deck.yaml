@@ -1,0 +1,20 @@
+version: 1
+
+project: demo
+
+defaults:
+  restart: "no"
+  stop_timeout: "5s"
+  log_buffer_lines: 500
+
+processes:
+  api:
+    cmd: "while true; do echo api listening on :3000; sleep 2; done"
+    env:
+      PORT: "3000"
+
+  worker:
+    cmd: "while true; do echo worker processing jobs; sleep 3; done"
+    depends_on:
+      - api
+    restart: "on-failure"
