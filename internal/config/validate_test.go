@@ -53,6 +53,29 @@ processes:
 	}
 }
 
+func TestDecodePreservesExplicitZeroLogBufferLines(t *testing.T) {
+	input := strings.NewReader(`
+version: 1
+defaults:
+  log_buffer_lines: 0
+processes:
+  app:
+    cmd: "echo app"
+    log_buffer_lines: 0
+`)
+
+	cfg, err := Decode(input)
+	if err != nil {
+		t.Fatalf("Decode() error = %v, want nil", err)
+	}
+	if cfg.Defaults.LogBufferLines == nil || *cfg.Defaults.LogBufferLines != 0 {
+		t.Fatalf("defaults.log_buffer_lines = %#v, want explicit 0", cfg.Defaults.LogBufferLines)
+	}
+	if cfg.Processes["app"].LogBufferLines == nil || *cfg.Processes["app"].LogBufferLines != 0 {
+		t.Fatalf("processes.app.log_buffer_lines = %#v, want explicit 0", cfg.Processes["app"].LogBufferLines)
+	}
+}
+
 func TestValidateAcceptsValidConfig(t *testing.T) {
 	cfg := validConfig()
 	if err := cfg.Validate(); err != nil {
@@ -192,10 +215,17 @@ func TestValidateRejectsInvalidConfig(t *testing.T) {
 			name: "negative log buffer",
 			mutate: func(cfg *Config) {
 				process := cfg.Processes["app"]
-				process.LogBufferLines = -1
+				process.LogBufferLines = intPtr(-1)
 				cfg.Processes["app"] = process
 			},
 			wantErr: "processes.app.log_buffer_lines must be greater than or equal to 0",
+		},
+		{
+			name: "negative default log buffer",
+			mutate: func(cfg *Config) {
+				cfg.Defaults.LogBufferLines = intPtr(-1)
+			},
+			wantErr: "defaults.log_buffer_lines must be greater than or equal to 0",
 		},
 	}
 
@@ -222,7 +252,7 @@ func validConfig() *Config {
 			Restart:        "no",
 			Backoff:        "1s",
 			StopTimeout:    "10s",
-			LogBufferLines: 1000,
+			LogBufferLines: intPtr(1000),
 		},
 		Processes: map[string]Process{
 			"app": {
@@ -230,4 +260,8 @@ func validConfig() *Config {
 			},
 		},
 	}
+}
+
+func intPtr(v int) *int {
+	return &v
 }

@@ -46,7 +46,7 @@ func validateDefaults(defaults Defaults) error {
 	if err := validateStopSignal("defaults.stop_signal", defaults.StopSignal); err != nil {
 		return err
 	}
-	if defaults.LogBufferLines < 0 {
+	if defaults.LogBufferLines != nil && *defaults.LogBufferLines < 0 {
 		return fmt.Errorf("config error: defaults.log_buffer_lines must be greater than or equal to 0")
 	}
 	return nil
@@ -86,7 +86,7 @@ func validateProcess(name string, process Process) error {
 	if err := validateStopSignal("processes."+name+".stop_signal", process.StopSignal); err != nil {
 		return err
 	}
-	if process.LogBufferLines < 0 {
+	if process.LogBufferLines != nil && *process.LogBufferLines < 0 {
 		return fmt.Errorf("config error: processes.%s.log_buffer_lines must be greater than or equal to 0", name)
 	}
 	return nil

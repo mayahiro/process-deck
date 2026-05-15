@@ -65,7 +65,7 @@ Unknown YAML fields are rejected.
 | `backoff` | duration | `1s` | Delay before restarting a process. Uses Go duration syntax such as `500ms`, `1s`, or `2m`. |
 | `stop_signal` | string | `TERM` | Signal sent when stopping a process. Must be `TERM`, `INT`, `KILL`, `HUP`, or `QUIT`; `SIG` prefixes are also accepted. |
 | `stop_timeout` | duration | `10s` | Time to wait after `stop_signal` before sending `KILL`. Uses Go duration syntax. |
-| `log_buffer_lines` | integer | `1000` | Number of in-memory log lines retained per process. Set a positive number to override the default. |
+| `log_buffer_lines` | integer | `1000` | Number of in-memory log lines retained per process. Set `0` to disable retention. |
 
 ## Process fields
 
@@ -83,7 +83,7 @@ Each process must define exactly one of `cmd` or `exec`.
 | `backoff` | No | duration | Process restart delay. Overrides `defaults.backoff`. |
 | `stop_signal` | No | string | Process stop signal. Overrides `defaults.stop_signal`. |
 | `stop_timeout` | No | duration | Process stop timeout. Overrides `defaults.stop_timeout`. |
-| `log_buffer_lines` | No | integer | Process log buffer size. Set a positive number to override `defaults.log_buffer_lines`. |
+| `log_buffer_lines` | No | integer | Process log buffer size. Set `0` to disable retention for this process. |
 
 ## Commands
 

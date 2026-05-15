@@ -46,15 +46,17 @@ type Supervisor struct {
 	options Options
 	deps    map[string][]string
 
-	mu        sync.Mutex
-	runCtx    context.Context
-	wg        sync.WaitGroup
-	processes map[string]*processRuntime
-	events    chan Event
-	done      chan struct{}
-	doneOnce  sync.Once
-	stopping  bool
-	hadFailed bool
+	mu           sync.Mutex
+	runCtx       context.Context
+	wg           sync.WaitGroup
+	processes    map[string]*processRuntime
+	events       chan Event
+	eventsMu     sync.Mutex
+	done         chan struct{}
+	doneOnce     sync.Once
+	eventsClosed bool
+	stopping     bool
+	hadFailed    bool
 }
 
 type processRuntime struct {
@@ -109,7 +111,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	s.mu.Unlock()
 
 	if err := s.startInitial(ctx); err != nil {
-		close(s.events)
+		s.closeEvents()
 		return err
 	}
 
@@ -130,7 +132,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 
 	s.wg.Wait()
 	s.emitStopped()
-	close(s.events)
+	s.closeEvents()
 	return err
 }
 
@@ -165,6 +167,8 @@ func (s *Supervisor) StartProcess(name string) error {
 }
 
 func (s *Supervisor) StopProcess(name string) error {
+	var events []Event
+
 	s.mu.Lock()
 	runtime := s.processes[name]
 	if runtime == nil {
@@ -175,13 +179,18 @@ func (s *Supervisor) StopProcess(name string) error {
 	runtime.restarting = false
 	runner := runtime.runner
 	if runner != nil && runtime.state == StateRunning {
-		s.setStateLocked(runtime, StateStopping)
+		if event, ok := s.setStateLocked(runtime, StateStopping); ok {
+			events = append(events, event)
+		}
 	}
 	if runner == nil && (runtime.state == StatePending || runtime.state == StateStarting) {
-		s.setStateLocked(runtime, StateExited)
+		if event, ok := s.setStateLocked(runtime, StateExited); ok {
+			events = append(events, event)
+		}
 		s.checkDoneLocked()
 	}
 	s.mu.Unlock()
+	s.emitEvents(events)
 
 	if runner != nil {
 		if err := runner.Stop(); err != nil {
@@ -200,16 +209,21 @@ func (s *Supervisor) RestartProcess(name string) error {
 }
 
 func (s *Supervisor) StopAll() error {
+	var events []Event
+
 	s.mu.Lock()
 	s.stopping = true
 	for _, runtime := range s.processes {
 		runtime.stopRequested = true
 		if runtime.restarting || runtime.state == StatePending || runtime.state == StateStarting {
 			runtime.restarting = false
-			s.setStateLocked(runtime, StateExited)
+			if event, ok := s.setStateLocked(runtime, StateExited); ok {
+				events = append(events, event)
+			}
 		}
 	}
 	s.mu.Unlock()
+	s.emitEvents(events)
 
 	order, err := ReverseDependencyOrder(s.deps)
 	if err != nil {
@@ -217,13 +231,18 @@ func (s *Supervisor) StopAll() error {
 	}
 
 	for _, name := range order {
+		events = nil
+
 		s.mu.Lock()
 		runtime := s.processes[name]
 		runner := runtime.runner
 		if runner != nil && runtime.state == StateRunning {
-			s.setStateLocked(runtime, StateStopping)
+			if event, ok := s.setStateLocked(runtime, StateStopping); ok {
+				events = append(events, event)
+			}
 		}
 		s.mu.Unlock()
+		s.emitEvents(events)
 
 		if runner != nil {
 			if err := runner.Stop(); err != nil {
@@ -300,6 +319,8 @@ func (s *Supervisor) startInitial(ctx context.Context) error {
 }
 
 func (s *Supervisor) startProcess(ctx context.Context, name string) error {
+	var events []Event
+
 	s.mu.Lock()
 	if s.stopping || ctx.Err() != nil {
 		s.mu.Unlock()
@@ -309,27 +330,35 @@ func (s *Supervisor) startProcess(ctx context.Context, name string) error {
 	runtime.stopRequested = false
 	runtime.restarting = false
 	runtime.exitCode = nil
-	s.setStateLocked(runtime, StateStarting)
+	if event, ok := s.setStateLocked(runtime, StateStarting); ok {
+		events = append(events, event)
+	}
 	spec, err := s.processSpec(runtime)
 	if err != nil {
 		s.mu.Unlock()
+		s.emitEvents(events)
 		return err
 	}
 	runner := process.NewRunner(spec)
 	runtime.runner = runner
 	s.mu.Unlock()
+	s.emitEvents(events)
 
 	run, err := runner.Start()
 	if err != nil {
 		return err
 	}
 
+	events = nil
+
 	s.mu.Lock()
 	runtime.pid = run.PID
 	runtime.startedAt = time.Now()
 	runtime.reachedRunning = true
-	s.setStateLocked(runtime, StateRunning)
-	s.emitLocked(Event{
+	if event, ok := s.setStateLocked(runtime, StateRunning); ok {
+		events = append(events, event)
+	}
+	events = append(events, Event{
 		Kind:    EventProcessStarted,
 		Process: name,
 		State:   StateRunning,
@@ -337,6 +366,7 @@ func (s *Supervisor) startProcess(ctx context.Context, name string) error {
 		Time:    time.Now(),
 	})
 	s.mu.Unlock()
+	s.emitEvents(events)
 
 	logsDone := make(chan struct{})
 	go func() {
@@ -355,6 +385,8 @@ func (s *Supervisor) waitProcess(ctx context.Context, name string, done <-chan p
 	result := <-done
 	<-logsDone
 
+	var events []Event
+
 	s.mu.Lock()
 	runtime := s.processes[name]
 	runtime.pid = 0
@@ -369,8 +401,10 @@ func (s *Supervisor) waitProcess(ctx context.Context, name string, done <-chan p
 	if state == StateFailed && !restart {
 		s.hadFailed = true
 	}
-	s.setStateLocked(runtime, state)
-	s.emitLocked(Event{
+	if event, ok := s.setStateLocked(runtime, state); ok {
+		events = append(events, event)
+	}
+	events = append(events, Event{
 		Kind:     EventProcessExited,
 		Process:  name,
 		State:    state,
@@ -383,10 +417,12 @@ func (s *Supervisor) waitProcess(ctx context.Context, name string, done <-chan p
 		runtime.restarts++
 		runtime.restarting = true
 		runtime.exitCode = nil
-		s.setStateLocked(runtime, StatePending)
+		if event, ok := s.setStateLocked(runtime, StatePending); ok {
+			events = append(events, event)
+		}
 		backoff := resolveBackoff(s.cfg.Defaults, runtime.config)
 		restarts := runtime.restarts
-		s.emitLocked(Event{
+		events = append(events, Event{
 			Kind:     EventProcessRestartScheduled,
 			Process:  name,
 			State:    StatePending,
@@ -394,29 +430,40 @@ func (s *Supervisor) waitProcess(ctx context.Context, name string, done <-chan p
 			Time:     time.Now(),
 		})
 		s.mu.Unlock()
+		s.emitEvents(events)
 
 		timer := time.NewTimer(backoff)
 		defer timer.Stop()
 		select {
 		case <-ctx.Done():
+			events = nil
+
 			s.mu.Lock()
 			runtime := s.processes[name]
 			runtime.restarting = false
 			if !terminalState(runtime.state) {
-				s.setStateLocked(runtime, StateExited)
+				if event, ok := s.setStateLocked(runtime, StateExited); ok {
+					events = append(events, event)
+				}
 			}
 			s.checkDoneLocked()
 			s.mu.Unlock()
+			s.emitEvents(events)
 		case <-timer.C:
 			if ctx.Err() != nil {
+				events = nil
+
 				s.mu.Lock()
 				runtime := s.processes[name]
 				runtime.restarting = false
 				if !terminalState(runtime.state) {
-					s.setStateLocked(runtime, StateExited)
+					if event, ok := s.setStateLocked(runtime, StateExited); ok {
+						events = append(events, event)
+					}
 				}
 				s.checkDoneLocked()
 				s.mu.Unlock()
+				s.emitEvents(events)
 				return
 			}
 			if err := s.startProcess(ctx, name); err != nil {
@@ -428,6 +475,7 @@ func (s *Supervisor) waitProcess(ctx context.Context, name string, done <-chan p
 
 	s.checkDoneLocked()
 	s.mu.Unlock()
+	s.emitEvents(events)
 }
 
 func (s *Supervisor) forwardLogs(name string, logs <-chan process.LogLine) {
@@ -439,15 +487,21 @@ func (s *Supervisor) forwardLogs(name string, logs <-chan process.LogLine) {
 		}
 		s.mu.Lock()
 		runtime := s.processes[name]
-		runtime.logs.Add(entry)
-		s.emitLocked(Event{
+		if runtime != nil {
+			runtime.logs.Add(entry)
+		}
+		s.mu.Unlock()
+
+		if runtime == nil {
+			continue
+		}
+		s.emit(Event{
 			Kind:    EventProcessLogLine,
 			Process: name,
 			Stream:  entry.Stream,
 			Line:    entry.Line,
 			Time:    entry.Time,
 		})
-		s.mu.Unlock()
 	}
 }
 
@@ -470,22 +524,25 @@ func (s *Supervisor) dependenciesReadyLocked(name string) bool {
 
 func (s *Supervisor) skipProcess(name string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	runtime := s.processes[name]
 	s.hadFailed = true
-	s.setStateLocked(runtime, StateSkipped)
-	s.emitLocked(Event{
+	events := make([]Event, 0, 2)
+	if event, ok := s.setStateLocked(runtime, StateSkipped); ok {
+		events = append(events, event)
+	}
+	events = append(events, Event{
 		Kind:    EventProcessSkipped,
 		Process: name,
 		State:   StateSkipped,
 		Time:    time.Now(),
 	})
+	s.mu.Unlock()
+	s.emitEvents(events)
 }
 
 func (s *Supervisor) markStartFailed(name string, err error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	runtime := s.processes[name]
 	exitCode := 1
@@ -495,8 +552,11 @@ func (s *Supervisor) markStartFailed(name string, err error) {
 	runtime.restarting = false
 	runtime.stopRequested = false
 	s.hadFailed = true
-	s.setStateLocked(runtime, StateFailed)
-	s.emitLocked(Event{
+	events := make([]Event, 0, 2)
+	if event, ok := s.setStateLocked(runtime, StateFailed); ok {
+		events = append(events, event)
+	}
+	events = append(events, Event{
 		Kind:    EventSupervisorError,
 		Process: name,
 		State:   StateFailed,
@@ -504,6 +564,8 @@ func (s *Supervisor) markStartFailed(name string, err error) {
 		Time:    time.Now(),
 	})
 	s.checkDoneLocked()
+	s.mu.Unlock()
+	s.emitEvents(events)
 }
 
 func (s *Supervisor) processSpec(runtime *processRuntime) (process.Spec, error) {
@@ -524,12 +586,12 @@ func (s *Supervisor) processSpec(runtime *processRuntime) (process.Spec, error) 
 	}, nil
 }
 
-func (s *Supervisor) setStateLocked(runtime *processRuntime, state State) {
+func (s *Supervisor) setStateLocked(runtime *processRuntime, state State) (Event, bool) {
 	if runtime.state == state {
-		return
+		return Event{}, false
 	}
 	runtime.state = state
-	s.emitLocked(Event{
+	return Event{
 		Kind:     EventProcessStateChanged,
 		Process:  runtime.name,
 		State:    state,
@@ -537,7 +599,7 @@ func (s *Supervisor) setStateLocked(runtime *processRuntime, state State) {
 		Restarts: runtime.restarts,
 		ExitCode: cloneExitCode(runtime.exitCode),
 		Time:     time.Now(),
-	})
+	}, true
 }
 
 func (s *Supervisor) checkDoneLocked() {
@@ -565,11 +627,28 @@ func (s *Supervisor) emitStopped() {
 }
 
 func (s *Supervisor) emit(event Event) {
+	s.eventsMu.Lock()
+	defer s.eventsMu.Unlock()
+	if s.eventsClosed {
+		return
+	}
 	s.events <- event
 }
 
-func (s *Supervisor) emitLocked(event Event) {
-	s.events <- event
+func (s *Supervisor) emitEvents(events []Event) {
+	for _, event := range events {
+		s.emit(event)
+	}
+}
+
+func (s *Supervisor) closeEvents() {
+	s.eventsMu.Lock()
+	defer s.eventsMu.Unlock()
+	if s.eventsClosed {
+		return
+	}
+	close(s.events)
+	s.eventsClosed = true
 }
 
 func (s *Supervisor) commandContext() (context.Context, error) {
@@ -639,11 +718,11 @@ func resolveStopTimeout(defaults config.Defaults, proc config.Process) time.Dura
 }
 
 func resolveLogBufferLines(defaults config.Defaults, proc config.Process) int {
-	if proc.LogBufferLines != 0 {
-		return proc.LogBufferLines
+	if proc.LogBufferLines != nil {
+		return *proc.LogBufferLines
 	}
-	if defaults.LogBufferLines != 0 {
-		return defaults.LogBufferLines
+	if defaults.LogBufferLines != nil {
+		return *defaults.LogBufferLines
 	}
 	return defaultLogBufferLines
 }

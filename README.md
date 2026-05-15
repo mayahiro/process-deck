@@ -67,7 +67,7 @@ Process Deck uses schema `version: 1`. Each process must define exactly one of `
 - `restart` supports `no`, `on-failure`, and `always`.
 - `stop_signal` defaults to `TERM`.
 - `stop_timeout` defaults to `10s`.
-- `log_buffer_lines` controls how many in-memory log lines are retained per process.
+- `log_buffer_lines` controls how many in-memory log lines are retained per process. Set it to `0` to disable log retention.
 
 Process Deck currently targets macOS.
 

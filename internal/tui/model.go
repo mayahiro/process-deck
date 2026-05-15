@@ -14,7 +14,11 @@ import (
 	"github.com/mayahiro/process-deck/internal/supervisor"
 )
 
-const tickInterval = time.Second
+const (
+	tickInterval                 = time.Second
+	logRefreshInterval           = 50 * time.Millisecond
+	maxSupervisorEventsPerUpdate = 256
+)
 
 type model struct {
 	supervisor *supervisor.Supervisor
@@ -26,15 +30,17 @@ type model struct {
 	quitting bool
 	stopped  bool
 
-	snapshots []supervisor.Snapshot
-	logLines  map[string][]supervisor.LogEntry
-	status    string
-	width     int
-	height    int
+	snapshots        []supervisor.Snapshot
+	logDirty         bool
+	logRefreshQueued bool
+	status           string
+	width            int
+	height           int
 }
 
-type supervisorEventMsg supervisor.Event
+type supervisorEventsMsg []supervisor.Event
 type supervisorEventsClosedMsg struct{}
+type logRefreshMsg struct{}
 type tickMsg time.Time
 
 type commandDoneMsg struct {
@@ -58,7 +64,6 @@ func newModel(sup *supervisor.Supervisor, cancel context.CancelFunc) model {
 		logs:      viewport.New(viewport.WithWidth(96), viewport.WithHeight(10)),
 		follow:    true,
 		snapshots: snapshots,
-		logLines:  make(map[string][]supervisor.LogEntry),
 		status:    "starting processes",
 		width:     96,
 		height:    24,
@@ -68,7 +73,7 @@ func newModel(sup *supervisor.Supervisor, cancel context.CancelFunc) model {
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(waitForEvent(m.supervisor.Events()), tick())
+	return tea.Batch(waitForEvents(m.supervisor.Events()), tick())
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -78,14 +83,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
-	case supervisorEventMsg:
-		m.handleSupervisorEvent(supervisor.Event(msg))
+	case supervisorEventsMsg:
+		m.handleSupervisorEvents([]supervisor.Event(msg))
 		if m.stopped {
 			return m, tea.Quit
 		}
-		return m, waitForEvent(m.supervisor.Events())
+		cmds := []tea.Cmd{waitForEvents(m.supervisor.Events())}
+		if m.logDirty && !m.logRefreshQueued {
+			m.logRefreshQueued = true
+			cmds = append(cmds, scheduleLogRefresh())
+		}
+		return m, tea.Batch(cmds...)
 	case supervisorEventsClosedMsg:
 		return m, tea.Quit
+	case logRefreshMsg:
+		m.logRefreshQueued = false
+		if m.logDirty {
+			m.logDirty = false
+			m.refreshLogPane()
+		}
+		return m, nil
 	case tickMsg:
 		m.refreshSnapshots()
 		return m, tick()
@@ -170,15 +187,27 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
-func (m *model) handleSupervisorEvent(event supervisor.Event) {
+func (m *model) handleSupervisorEvents(events []supervisor.Event) {
+	refreshSnapshots := false
+	for _, event := range events {
+		if m.handleSupervisorEvent(event) {
+			refreshSnapshots = true
+		}
+	}
+	if !refreshSnapshots {
+		return
+	}
+	m.refreshSnapshots()
+	m.updateTerminalStatus()
+}
+
+func (m *model) handleSupervisorEvent(event supervisor.Event) bool {
 	switch event.Kind {
 	case supervisor.EventProcessLogLine:
-		m.logLines[event.Process] = append(m.logLines[event.Process], supervisor.LogEntry{
-			Stream: event.Stream,
-			Line:   event.Line,
-			Time:   event.Time,
-		})
-		m.refreshLogPane()
+		if event.Process == m.selectedProcess() {
+			m.logDirty = true
+		}
+		return false
 	case supervisor.EventProcessRestartScheduled:
 		m.status = fmt.Sprintf("%s restart scheduled", event.Process)
 	case supervisor.EventProcessSkipped:
@@ -191,7 +220,10 @@ func (m *model) handleSupervisorEvent(event supervisor.Event) {
 		m.stopped = true
 		m.status = "stopped"
 	}
-	m.refreshSnapshots()
+	return true
+}
+
+func (m *model) updateTerminalStatus() {
 	if !m.quitting && !m.stopped && m.allTerminal() {
 		if m.anyFailed() {
 			m.status = "one or more processes failed"
@@ -216,7 +248,11 @@ func (m *model) refreshSnapshots() {
 
 func (m *model) refreshLogPane() {
 	name := m.selectedProcess()
-	lines := logViewLines(m.logLines[name])
+	var entries []supervisor.LogEntry
+	if name != "" && m.supervisor != nil {
+		entries = m.supervisor.Logs(name)
+	}
+	lines := logViewLines(entries)
 	m.logs.SetContentLines(lines)
 	if m.follow {
 		m.logs.GotoBottom()
@@ -306,14 +342,32 @@ func (m model) anyFailed() bool {
 	return false
 }
 
-func waitForEvent(events <-chan supervisor.Event) tea.Cmd {
+func waitForEvents(events <-chan supervisor.Event) tea.Cmd {
 	return func() tea.Msg {
 		event, ok := <-events
 		if !ok {
 			return supervisorEventsClosedMsg{}
 		}
-		return supervisorEventMsg(event)
+		batch := []supervisor.Event{event}
+		for len(batch) < maxSupervisorEventsPerUpdate {
+			select {
+			case event, ok := <-events:
+				if !ok {
+					return supervisorEventsMsg(batch)
+				}
+				batch = append(batch, event)
+			default:
+				return supervisorEventsMsg(batch)
+			}
+		}
+		return supervisorEventsMsg(batch)
 	}
+}
+
+func scheduleLogRefresh() tea.Cmd {
+	return tea.Tick(logRefreshInterval, func(time.Time) tea.Msg {
+		return logRefreshMsg{}
+	})
 }
 
 func tick() tea.Cmd {

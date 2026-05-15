@@ -2,6 +2,7 @@ package supervisor
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -166,6 +167,69 @@ func TestRunCanStayOpenAfterAllProcessesExit(t *testing.T) {
 	}
 }
 
+func TestLogsRespectLogBufferLines(t *testing.T) {
+	cfg := testConfig(map[string]config.Process{
+		"spam": {
+			Cmd:            "printf 'one\\ntwo\\nthree\\nfour\\n'",
+			LogBufferLines: intPtr(2),
+		},
+	})
+
+	sup, err := New(cfg, Options{})
+	if err != nil {
+		t.Fatalf("New() error = %v, want nil", err)
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- sup.Run(context.Background())
+	}()
+
+	for range sup.Events() {
+	}
+	if err := <-errCh; err != nil {
+		t.Fatalf("Run() error = %v, want nil", err)
+	}
+
+	logs := sup.Logs("spam")
+	got := make([]string, 0, len(logs))
+	for _, entry := range logs {
+		got = append(got, entry.Line)
+	}
+	want := []string{"three", "four"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Logs() lines = %#v, want %#v", got, want)
+	}
+}
+
+func TestLogsCanBeDisabledWithZeroLogBufferLines(t *testing.T) {
+	cfg := testConfig(map[string]config.Process{
+		"spam": {
+			Cmd:            "printf 'one\\ntwo\\n'",
+			LogBufferLines: intPtr(0),
+		},
+	})
+
+	sup, err := New(cfg, Options{})
+	if err != nil {
+		t.Fatalf("New() error = %v, want nil", err)
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- sup.Run(context.Background())
+	}()
+
+	for range sup.Events() {
+	}
+	if err := <-errCh; err != nil {
+		t.Fatalf("Run() error = %v, want nil", err)
+	}
+	if got := sup.Logs("spam"); got != nil {
+		t.Fatalf("Logs() = %#v, want nil", got)
+	}
+}
+
 func runSupervisor(t *testing.T, cfg *config.Config, timeout time.Duration) ([]Event, error) {
 	t.Helper()
 
@@ -201,10 +265,14 @@ func testConfig(processes map[string]config.Process) *config.Config {
 			Backoff:        "1s",
 			StopSignal:     "TERM",
 			StopTimeout:    "1s",
-			LogBufferLines: 100,
+			LogBufferLines: intPtr(100),
 		},
 		Processes: processes,
 	}
+}
+
+func intPtr(v int) *int {
+	return &v
 }
 
 func hasEventLog(events []Event, process string, stream string, line string) bool {
