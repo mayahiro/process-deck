@@ -583,6 +583,7 @@ func (s *Supervisor) processSpec(runtime *processRuntime) (process.Spec, error) 
 		Env:         cloneEnv(runtime.config.Env),
 		StopSignal:  sig,
 		StopTimeout: resolveStopTimeout(s.cfg.Defaults, runtime.config),
+		PTY:         resolvePTY(s.cfg.Defaults, runtime.config),
 	}, nil
 }
 
@@ -725,6 +726,16 @@ func resolveLogBufferLines(defaults config.Defaults, proc config.Process) int {
 		return *defaults.LogBufferLines
 	}
 	return defaultLogBufferLines
+}
+
+func resolvePTY(defaults config.Defaults, proc config.Process) bool {
+	if proc.PTY != nil {
+		return *proc.PTY
+	}
+	if defaults.PTY != nil {
+		return *defaults.PTY
+	}
+	return false
 }
 
 func resolveDuration(values ...any) time.Duration {

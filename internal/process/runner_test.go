@@ -36,6 +36,34 @@ func TestRunnerCapturesStdoutAndStderr(t *testing.T) {
 	}
 }
 
+func TestRunnerCapturesPTYOutput(t *testing.T) {
+	runner := NewRunner(Spec{
+		Cmd: "if [ -t 1 ]; then printf 'tty\\n'; else printf 'pipe\\n'; fi; printf 'err\\n' >&2",
+		PTY: true,
+	})
+
+	run, err := runner.Start()
+	if err != nil {
+		t.Fatalf("Start() error = %v, want nil", err)
+	}
+
+	var logs []LogLine
+	for line := range run.Logs {
+		logs = append(logs, line)
+	}
+	result := <-run.Done
+	if result.ExitCode != 0 {
+		t.Fatalf("ExitCode = %d, want 0", result.ExitCode)
+	}
+
+	if !hasLog(logs, "pty", "tty") {
+		t.Fatalf("pty tty log missing from %#v", logs)
+	}
+	if !hasLog(logs, "pty", "err") {
+		t.Fatalf("pty stderr log missing from %#v", logs)
+	}
+}
+
 func TestRunnerStopTerminatesProcessGroup(t *testing.T) {
 	runner := NewRunner(Spec{
 		Cmd:         "trap 'exit 0' TERM; while true; do sleep 1; done",
@@ -110,6 +138,8 @@ func TestParseEnvFile(t *testing.T) {
 	input := strings.NewReader(`
 # comment
 FOO=bar
+source_up
+source_up .env
 EMPTY=
 QUOTED="hello world"
 SINGLE='literal $VALUE'
@@ -134,13 +164,15 @@ HASH=one#two
 	}
 }
 
-func TestParseEnvFileRejectsInvalidLine(t *testing.T) {
-	_, err := parseEnvFile(strings.NewReader("BAD\n"), "test.env")
-	if err == nil {
-		t.Fatal("parseEnvFile() error = nil, want invalid line error")
+func TestParseEnvFileIgnoresNonAssignmentLines(t *testing.T) {
+	got, err := parseEnvFile(strings.NewReader("source_up\nsource_up .env\nFOO=bar\n"), "test.env")
+	if err != nil {
+		t.Fatalf("parseEnvFile() error = %v, want nil", err)
 	}
-	if !strings.Contains(err.Error(), "KEY=VALUE") {
-		t.Fatalf("parseEnvFile() error = %q, want KEY=VALUE", err.Error())
+
+	want := []string{"FOO=bar"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("parseEnvFile() = %#v, want %#v", got, want)
 	}
 }
 

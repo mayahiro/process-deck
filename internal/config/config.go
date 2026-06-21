@@ -30,6 +30,7 @@ type Defaults struct {
 	StopSignal     string `yaml:"stop_signal"`
 	StopTimeout    string `yaml:"stop_timeout"`
 	LogBufferLines *int   `yaml:"log_buffer_lines"`
+	PTY            *bool  `yaml:"pty"`
 }
 
 // Process describes one managed process.
@@ -45,6 +46,7 @@ type Process struct {
 	StopSignal     string            `yaml:"stop_signal"`
 	StopTimeout    string            `yaml:"stop_timeout"`
 	LogBufferLines *int              `yaml:"log_buffer_lines"`
+	PTY            *bool             `yaml:"pty"`
 }
 
 func (c *Config) ProcessNames() []string {

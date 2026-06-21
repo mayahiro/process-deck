@@ -18,6 +18,7 @@ const (
 	tickInterval                 = time.Second
 	logRefreshInterval           = 50 * time.Millisecond
 	maxSupervisorEventsPerUpdate = 256
+	logHorizontalScrollStep      = 8
 )
 
 type model struct {
@@ -27,6 +28,7 @@ type model struct {
 	table    table.Model
 	logs     viewport.Model
 	follow   bool
+	logWrap  bool
 	quitting bool
 	stopped  bool
 
@@ -63,11 +65,13 @@ func newModel(sup *supervisor.Supervisor, cancel context.CancelFunc) model {
 		),
 		logs:      viewport.New(viewport.WithWidth(96), viewport.WithHeight(10)),
 		follow:    true,
+		logWrap:   true,
 		snapshots: snapshots,
 		status:    "starting processes",
 		width:     96,
 		height:    24,
 	}
+	m.logs.SoftWrap = m.logWrap
 	m.refreshLogPane()
 	return m
 }
@@ -178,6 +182,33 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.status = "log follow disabled"
 		}
 		return *m, nil
+	case "w":
+		m.toggleLogWrap()
+		return *m, nil
+	case "pgup":
+		m.scrollLog(false, func() { m.logs.PageUp() })
+		return *m, nil
+	case "pgdown":
+		m.scrollLog(false, func() { m.logs.PageDown() })
+		return *m, nil
+	case "ctrl+u":
+		m.scrollLog(false, func() { m.logs.HalfPageUp() })
+		return *m, nil
+	case "ctrl+d":
+		m.scrollLog(false, func() { m.logs.HalfPageDown() })
+		return *m, nil
+	case "home":
+		m.scrollLog(false, func() { m.logs.GotoTop() })
+		return *m, nil
+	case "end":
+		m.scrollLog(false, func() { m.logs.GotoBottom() })
+		return *m, nil
+	case "left", "h":
+		m.scrollLog(true, func() { m.logs.ScrollLeft(logHorizontalScrollStep) })
+		return *m, nil
+	case "right", "l":
+		m.scrollLog(true, func() { m.logs.ScrollRight(logHorizontalScrollStep) })
+		return *m, nil
 	default:
 		var cmd tea.Cmd
 		if !m.follow {
@@ -185,6 +216,28 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return *m, cmd
 	}
+}
+
+func (m *model) toggleLogWrap() {
+	nextWrap := !m.logWrap
+	if nextWrap {
+		m.logs.SetXOffset(0)
+	}
+	m.logWrap = nextWrap
+	m.logs.SoftWrap = m.logWrap
+	if m.logWrap {
+		m.status = "log wrap enabled"
+		return
+	}
+	m.status = "log wrap disabled"
+}
+
+func (m *model) scrollLog(keepFollow bool, scroll func()) {
+	if !keepFollow && m.follow {
+		m.follow = false
+		m.status = "log follow disabled"
+	}
+	scroll()
 }
 
 func (m *model) handleSupervisorEvents(events []supervisor.Event) {
@@ -285,6 +338,7 @@ func (m *model) resize(width int, height int) {
 	m.table.SetColumns(defaultColumns(width))
 	m.logs.SetWidth(width)
 	m.logs.SetHeight(logHeight)
+	m.logs.SoftWrap = m.logWrap
 	m.refreshLogPane()
 }
 
@@ -316,7 +370,14 @@ func (m model) footerText() string {
 	if m.follow {
 		follow = "on"
 	}
-	return fmt.Sprintf("↑/k ↓/j select   s stop   a start   r restart   f follow:%s   q quit", follow)
+	wrap := "off"
+	if m.logWrap {
+		wrap = "on"
+	}
+	if m.width < 90 {
+		return fmt.Sprintf("up/k down/j select   pg log   w:%s f:%s   q quit", wrap, follow)
+	}
+	return fmt.Sprintf("up/k down/j select   pgup/pgdn log   left/right xscroll   w wrap:%s   f follow:%s   s/a/r proc   q quit", wrap, follow)
 }
 
 func (m model) allTerminal() bool {
@@ -428,9 +489,16 @@ func logViewLines(entries []supervisor.LogEntry) []string {
 	}
 	lines := make([]string, 0, len(entries))
 	for _, entry := range entries {
-		lines = append(lines, fmt.Sprintf("%s %-6s %s", entry.Time.Format("15:04:05"), entry.Stream, entry.Line))
+		lines = append(lines, fmt.Sprintf("%s %-8s %s", entry.Time.Format("15:04:05"), logSourceLabel(entry.Stream), entry.Line))
 	}
 	return lines
+}
+
+func logSourceLabel(stream string) string {
+	if stream == "" {
+		return "[log]"
+	}
+	return "[" + stream + "]"
 }
 
 func pidText(pid int) string {

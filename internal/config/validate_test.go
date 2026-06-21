@@ -76,6 +76,29 @@ processes:
 	}
 }
 
+func TestDecodePreservesExplicitPTYValues(t *testing.T) {
+	input := strings.NewReader(`
+version: 1
+defaults:
+  pty: true
+processes:
+  app:
+    cmd: "echo app"
+    pty: false
+`)
+
+	cfg, err := Decode(input)
+	if err != nil {
+		t.Fatalf("Decode() error = %v, want nil", err)
+	}
+	if cfg.Defaults.PTY == nil || *cfg.Defaults.PTY != true {
+		t.Fatalf("defaults.pty = %#v, want explicit true", cfg.Defaults.PTY)
+	}
+	if cfg.Processes["app"].PTY == nil || *cfg.Processes["app"].PTY != false {
+		t.Fatalf("processes.app.pty = %#v, want explicit false", cfg.Processes["app"].PTY)
+	}
+}
+
 func TestValidateAcceptsValidConfig(t *testing.T) {
 	cfg := validConfig()
 	if err := cfg.Validate(); err != nil {

@@ -62,12 +62,13 @@ Process Deck uses schema `version: 1`. Each process must define exactly one of `
 
 - `cmd` runs through `/bin/sh -c`.
 - `exec` runs an executable directly without shell expansion.
-- `env_file` loads one or more `KEY=VALUE` environment files relative to the process `cwd`.
+- `env_file` loads one or more environment files relative to the process `cwd`. Only `KEY=VALUE` entries are applied.
 - `depends_on` waits for listed processes to reach the running state before starting the dependent process.
 - `restart` supports `no`, `on-failure`, and `always`.
 - `stop_signal` defaults to `TERM`.
 - `stop_timeout` defaults to `10s`.
 - `log_buffer_lines` controls how many in-memory log lines are retained per process. Set it to `0` to disable log retention.
+- `pty` runs a process with a pseudo terminal. This helps TTY-aware tools emit color, but stdout and stderr are merged into the `pty` stream.
 
 Process Deck currently targets macOS.
 
@@ -96,11 +97,16 @@ Release builds write binaries to `tmp/` and embed the version shown by `procdeck
 | `a` | Start selected process |
 | `r` | Restart selected process |
 | `f` | Toggle log follow |
+| `w` | Toggle log wrapping |
+| `pgup` / `pgdn` | Scroll logs by page |
+| `ctrl+u` / `ctrl+d` | Scroll logs by half page |
+| `home` / `end` | Jump logs to top or bottom |
+| `left` / `right` | Scroll logs horizontally when wrapping is disabled |
 | `q` / `ctrl+c` | Quit and stop all processes |
 
 ## Non-goals
 
-The MVP does not aim to provide full process-compose compatibility, container support, a REST API, server/client mode, namespaces, replicas, scheduled processes, dynamic config editing, health checks, PTY support, log rotation, metrics, or daemonization.
+The MVP does not aim to provide full process-compose compatibility, container support, a REST API, server/client mode, namespaces, replicas, scheduled processes, dynamic config editing, health checks, interactive PTY input forwarding, log rotation, metrics, or daemonization.
 
 ## Process Compose Comparison
 

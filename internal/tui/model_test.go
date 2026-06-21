@@ -5,6 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/mayahiro/process-deck/internal/supervisor"
 )
 
@@ -37,9 +40,71 @@ func TestLogViewLines(t *testing.T) {
 	}
 
 	got := logViewLines(entries)
-	want := []string{"10:20:30 stderr warning"}
+	want := []string{"10:20:30 [stderr] warning"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("logViewLines() = %#v, want %#v", got, want)
+	}
+}
+
+func TestLogSourceLabelFallsBackForEmptyStream(t *testing.T) {
+	if got, want := logSourceLabel(""), "[log]"; got != want {
+		t.Fatalf("logSourceLabel() = %q, want %q", got, want)
+	}
+}
+
+func TestToggleLogWrap(t *testing.T) {
+	m := model{
+		logs:    viewport.New(viewport.WithWidth(8), viewport.WithHeight(3)),
+		logWrap: true,
+	}
+	m.logs.SoftWrap = true
+
+	m.handleKey(keyPress('w', "w"))
+	if m.logWrap {
+		t.Fatal("logWrap = true, want false")
+	}
+	if m.logs.SoftWrap {
+		t.Fatal("logs.SoftWrap = true, want false")
+	}
+	if got, want := m.status, "log wrap disabled"; got != want {
+		t.Fatalf("status = %q, want %q", got, want)
+	}
+
+	m.logs.SetContentLines([]string{"01234567890123456789"})
+	m.logs.ScrollRight(8)
+	if got := m.logs.XOffset(); got == 0 {
+		t.Fatalf("XOffset = %d, want scrolled", got)
+	}
+
+	m.handleKey(keyPress('w', "w"))
+	if !m.logWrap {
+		t.Fatal("logWrap = false, want true")
+	}
+	if !m.logs.SoftWrap {
+		t.Fatal("logs.SoftWrap = false, want true")
+	}
+	if got := m.logs.XOffset(); got != 0 {
+		t.Fatalf("XOffset = %d, want 0", got)
+	}
+}
+
+func TestLogScrollDisablesFollow(t *testing.T) {
+	m := model{
+		logs:   viewport.New(viewport.WithWidth(20), viewport.WithHeight(2)),
+		follow: true,
+	}
+	m.logs.SetContentLines([]string{"one", "two", "three", "four", "five"})
+	m.logs.GotoBottom()
+
+	m.handleKey(specialKey(tea.KeyPgUp))
+	if m.follow {
+		t.Fatal("follow = true, want false")
+	}
+	if m.logs.AtBottom() {
+		t.Fatal("logs.AtBottom() = true, want false")
+	}
+	if got, want := m.status, "log follow disabled"; got != want {
+		t.Fatalf("status = %q, want %q", got, want)
 	}
 }
 
@@ -65,4 +130,12 @@ func TestTerminalStatusHelpers(t *testing.T) {
 	if !m.anyFailed() {
 		t.Fatal("anyFailed() = false, want true")
 	}
+}
+
+func keyPress(code rune, text string) tea.KeyPressMsg {
+	return tea.KeyPressMsg(tea.Key{Code: code, Text: text})
+}
+
+func specialKey(code rune) tea.KeyPressMsg {
+	return tea.KeyPressMsg(tea.Key{Code: code})
 }

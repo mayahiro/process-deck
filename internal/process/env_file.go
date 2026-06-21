@@ -48,7 +48,7 @@ func parseEnvFileLine(line string) (string, bool, error) {
 
 	key, value, ok := strings.Cut(trimmed, "=")
 	if !ok {
-		return "", false, fmt.Errorf("line must use KEY=VALUE syntax")
+		return "", false, nil
 	}
 
 	key = strings.TrimSpace(key)

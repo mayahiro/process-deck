@@ -22,6 +22,7 @@ type Spec struct {
 	Env         map[string]string
 	StopSignal  os.Signal
 	StopTimeout time.Duration
+	PTY         bool
 }
 
 type LogLine struct {
@@ -55,11 +56,18 @@ func NewRunner(spec Spec) *Runner {
 }
 
 func (r *Runner) Start() (Run, error) {
+	if r.spec.PTY {
+		return r.startPTY()
+	}
+	return r.startPipes()
+}
+
+func (r *Runner) startPipes() (Run, error) {
 	cmd, err := buildCommand(r.spec)
 	if err != nil {
 		return Run{}, err
 	}
-	setProcessGroup(cmd)
+	setPipeProcessGroup(cmd)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -92,6 +100,66 @@ func (r *Runner) Start() (Run, error) {
 	readers.Add(2)
 	go scanLines(&readers, stdout, "stdout", logs)
 	go scanLines(&readers, stderr, "stderr", logs)
+
+	go func() {
+		err := cmd.Wait()
+		readers.Wait()
+		close(logs)
+		done <- Result{
+			ExitCode: exitCode(cmd, err),
+			Err:      err,
+		}
+		close(done)
+		close(exited)
+	}()
+
+	return run, nil
+}
+
+func (r *Runner) startPTY() (Run, error) {
+	cmd, err := buildCommand(r.spec)
+	if err != nil {
+		return Run{}, err
+	}
+
+	master, slave, err := openPTY()
+	if err != nil {
+		return Run{}, err
+	}
+
+	setTTYProcessGroup(cmd)
+	cmd.Stdin = slave
+	cmd.Stdout = slave
+	cmd.Stderr = slave
+
+	if err := cmd.Start(); err != nil {
+		_ = master.Close()
+		_ = slave.Close()
+		return Run{}, err
+	}
+	_ = slave.Close()
+
+	logs := make(chan LogLine, 128)
+	done := make(chan Result, 1)
+	exited := make(chan struct{})
+	run := Run{
+		PID:  cmd.Process.Pid,
+		Logs: logs,
+		Done: done,
+	}
+
+	r.mu.Lock()
+	r.cmd = cmd
+	r.run = run
+	r.exited = exited
+	r.mu.Unlock()
+
+	var readers sync.WaitGroup
+	readers.Add(1)
+	go func() {
+		scanLines(&readers, master, "pty", logs)
+		_ = master.Close()
+	}()
 
 	go func() {
 		err := cmd.Wait()
@@ -195,9 +263,10 @@ func scanLines(wg *sync.WaitGroup, r io.Reader, stream string, logs chan<- LogLi
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
+		line := strings.TrimSuffix(scanner.Text(), "\r")
 		logs <- LogLine{
 			Stream: stream,
-			Line:   scanner.Text(),
+			Line:   line,
 			Time:   time.Now(),
 		}
 	}

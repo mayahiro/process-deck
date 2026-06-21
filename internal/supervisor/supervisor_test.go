@@ -230,6 +230,40 @@ func TestLogsCanBeDisabledWithZeroLogBufferLines(t *testing.T) {
 	}
 }
 
+func TestProcessSpecResolvesPTY(t *testing.T) {
+	cfg := testConfig(map[string]config.Process{
+		"default": {
+			Cmd: "echo default",
+		},
+		"override": {
+			Cmd: "echo override",
+			PTY: boolPtr(false),
+		},
+	})
+	cfg.Defaults.PTY = boolPtr(true)
+
+	sup, err := New(cfg, Options{})
+	if err != nil {
+		t.Fatalf("New() error = %v, want nil", err)
+	}
+
+	defaultSpec, err := sup.processSpec(sup.processes["default"])
+	if err != nil {
+		t.Fatalf("processSpec(default) error = %v, want nil", err)
+	}
+	if !defaultSpec.PTY {
+		t.Fatal("defaultSpec.PTY = false, want true")
+	}
+
+	overrideSpec, err := sup.processSpec(sup.processes["override"])
+	if err != nil {
+		t.Fatalf("processSpec(override) error = %v, want nil", err)
+	}
+	if overrideSpec.PTY {
+		t.Fatal("overrideSpec.PTY = true, want false")
+	}
+}
+
 func runSupervisor(t *testing.T, cfg *config.Config, timeout time.Duration) ([]Event, error) {
 	t.Helper()
 
@@ -272,6 +306,10 @@ func testConfig(processes map[string]config.Process) *config.Config {
 }
 
 func intPtr(v int) *int {
+	return &v
+}
+
+func boolPtr(v bool) *bool {
 	return &v
 }
 

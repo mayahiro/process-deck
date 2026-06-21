@@ -24,6 +24,7 @@ defaults:
   stop_signal: "TERM"
   stop_timeout: "5s"
   log_buffer_lines: 500
+  pty: false
 
 processes:
   api:
@@ -66,6 +67,7 @@ Unknown YAML fields are rejected.
 | `stop_signal` | string | `TERM` | Signal sent when stopping a process. Must be `TERM`, `INT`, `KILL`, `HUP`, or `QUIT`; `SIG` prefixes are also accepted. |
 | `stop_timeout` | duration | `10s` | Time to wait after `stop_signal` before sending `KILL`. Uses Go duration syntax. |
 | `log_buffer_lines` | integer | `1000` | Number of in-memory log lines retained per process. Set `0` to disable retention. |
+| `pty` | boolean | `false` | Run processes with a pseudo terminal by default. PTY output is captured as a single `pty` stream. |
 
 ## Process fields
 
@@ -84,6 +86,7 @@ Each process must define exactly one of `cmd` or `exec`.
 | `stop_signal` | No | string | Process stop signal. Overrides `defaults.stop_signal`. |
 | `stop_timeout` | No | duration | Process stop timeout. Overrides `defaults.stop_timeout`. |
 | `log_buffer_lines` | No | integer | Process log buffer size. Set `0` to disable retention for this process. |
+| `pty` | No | boolean | Run this process with a pseudo terminal. This helps TTY-aware tools emit color and terminal output, but stdout and stderr are merged into the `pty` stream. Overrides `defaults.pty`. |
 
 ## Commands
 
@@ -103,6 +106,15 @@ processes:
     exec:
       - "python"
       - "worker.py"
+```
+
+Use `pty` when a command needs to detect a terminal, for example to emit color:
+
+```yaml
+processes:
+  api:
+    cmd: "npm run dev"
+    pty: true
 ```
 
 ## Working directory and environment
@@ -140,7 +152,8 @@ Relative `env_file` paths are resolved from the process `cwd`. Missing files are
 The parser intentionally supports a small dotenv subset:
 
 - Blank lines and lines beginning with `#` are ignored.
-- Each variable line must use `KEY=VALUE`.
+- Lines without `=` are ignored.
+- Variable lines use `KEY=VALUE`.
 - Empty values such as `KEY=` are allowed.
 - Single-quoted and double-quoted values are unquoted.
 - Inline comments in unquoted values are supported when `#` is preceded by a space.
@@ -213,6 +226,10 @@ Processes are started in their own process group. When a process is stopped, Pro
 ## Logs
 
 Process Deck captures stdout and stderr line by line. The TUI keeps an in-memory ring buffer per process. In `--no-tui` mode, log lines are written to stdout with the process name and stream.
+
+When `pty: true` is enabled, stdout and stderr are connected to the same pseudo terminal and cannot be separated. Those log lines use the `pty` stream label.
+
+The TUI labels each log line with the captured stream, such as `[stdout]`, `[stderr]`, or `[pty]`. Log wrapping is enabled by default and can be toggled with `w`. Logs can be scrolled vertically with `pgup` and `pgdn`; horizontal scrolling is available with `left` and `right` when wrapping is disabled.
 
 ## Validation
 
