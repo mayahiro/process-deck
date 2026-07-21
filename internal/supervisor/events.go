@@ -16,14 +16,17 @@ const (
 )
 
 type Event struct {
-	Kind     EventKind
-	Process  string
-	Stream   string
-	Line     string
-	State    State
-	PID      int
-	Restarts int
-	ExitCode *int
-	Error    error
-	Time     time.Time
+	Kind          EventKind
+	Process       string
+	Stream        string
+	Line          string
+	LogCursor     LogCursor
+	LogRetained   int
+	LogStateValid bool
+	State         State
+	PID           int
+	Restarts      int
+	ExitCode      *int
+	Error         error
+	Time          time.Time
 }

@@ -185,7 +185,9 @@ func TestLogsRespectLogBufferLines(t *testing.T) {
 		errCh <- sup.Run(context.Background())
 	}()
 
-	for range sup.Events() {
+	var events []Event
+	for event := range sup.Events() {
+		events = append(events, event)
 	}
 	if err := <-errCh; err != nil {
 		t.Fatalf("Run() error = %v, want nil", err)
@@ -199,6 +201,30 @@ func TestLogsRespectLogBufferLines(t *testing.T) {
 	want := []string{"three", "four"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Logs() lines = %#v, want %#v", got, want)
+	}
+	lastEvent, ok := findLogEvent(events, "spam", "stdout", "four")
+	if !ok {
+		t.Fatalf("missing final log event in %#v", events)
+	}
+	if !lastEvent.LogStateValid || lastEvent.LogCursor != 4 || lastEvent.LogRetained != 2 {
+		t.Fatalf("final log event metadata = %+v", lastEvent)
+	}
+
+	batch := sup.LogsSince("spam", 0)
+	got = got[:0]
+	for _, entry := range batch.Entries {
+		got = append(got, entry.Line)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("LogsSince() lines = %#v, want %#v", got, want)
+	}
+	if batch.Cursor != 4 || batch.Retained != 2 || !batch.Reset {
+		t.Fatalf("LogsSince() metadata = %+v", batch)
+	}
+
+	next := sup.LogsSince("spam", batch.Cursor)
+	if len(next.Entries) != 0 || next.Cursor != batch.Cursor || next.Retained != 2 || next.Reset {
+		t.Fatalf("next LogsSince() = %+v", next)
 	}
 }
 
@@ -314,12 +340,17 @@ func boolPtr(v bool) *bool {
 }
 
 func hasEventLog(events []Event, process string, stream string, line string) bool {
+	_, ok := findLogEvent(events, process, stream, line)
+	return ok
+}
+
+func findLogEvent(events []Event, process string, stream string, line string) (Event, bool) {
 	for _, event := range events {
 		if event.Kind == EventProcessLogLine && event.Process == process && event.Stream == stream && event.Line == line {
-			return true
+			return event, true
 		}
 	}
-	return false
+	return Event{}, false
 }
 
 func hasEventKind(events []Event, kind EventKind, process string) bool {

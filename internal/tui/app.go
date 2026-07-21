@@ -2,9 +2,8 @@ package tui
 
 import (
 	"context"
-	"errors"
 
-	tea "charm.land/bubbletea/v2"
+	nagitui "github.com/mayahiro/nagitui-go"
 
 	"github.com/mayahiro/process-deck/internal/config"
 	"github.com/mayahiro/process-deck/internal/supervisor"
@@ -27,13 +26,18 @@ func Run(cfg *config.Config, baseDir string) error {
 		runErr <- sup.Run(ctx)
 	}()
 
-	program := tea.NewProgram(newModel(sup, cancel))
-	_, err = program.Run()
+	err = nagitui.RunTerminal[appMessage](newModel(sup, cancel), terminalOptions(), mapEvent)
 	cancel()
 
 	supervisorErr := <-runErr
-	if err != nil && !errors.Is(err, tea.ErrProgramKilled) {
+	if err != nil {
 		return err
 	}
 	return supervisorErr
+}
+
+func terminalOptions() nagitui.TerminalOptions {
+	options := nagitui.DefaultTerminalOptions()
+	options.MinimumFrameInterval = logRefreshInterval
+	return options
 }

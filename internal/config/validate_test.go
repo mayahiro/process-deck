@@ -18,6 +18,19 @@ processes:
 	}
 }
 
+func TestDecodeRejectsDuplicateFields(t *testing.T) {
+	input := strings.NewReader(`
+version: 1
+processes:
+  app:
+    cmd: "echo first"
+    cmd: "echo second"
+`)
+	if _, err := Decode(input); err == nil {
+		t.Fatal("Decode() error = nil, want duplicate field error")
+	}
+}
+
 func TestDecodeAcceptsEnvFileScalarAndList(t *testing.T) {
 	scalar := strings.NewReader(`
 version: 1
@@ -50,6 +63,55 @@ processes:
 	got := []string(cfg.Processes["app"].EnvFile)
 	if len(got) != 2 || got[0] != ".env" || got[1] != ".env.local" {
 		t.Fatalf("list env_file = %#v, want [.env .env.local]", got)
+	}
+}
+
+func TestDecodeRejectsInvalidEnvFileShapes(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+	}{
+		{name: "mapping", value: "{path: .env}"},
+		{name: "mapping in list", value: "[{path: .env}]"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := strings.NewReader(`
+version: 1
+processes:
+  app:
+    cmd: "echo app"
+    env_file: ` + tt.value + "\n")
+			if _, err := Decode(input); err == nil {
+				t.Fatal("Decode() error = nil, want env_file shape error")
+			}
+		})
+	}
+}
+
+func TestDecodeReadsOnlyFirstDocument(t *testing.T) {
+	input := strings.NewReader(`
+version: 1
+processes:
+  first:
+    cmd: "echo first"
+---
+version: 1
+processes:
+  second:
+    cmd: "echo second"
+`)
+
+	cfg, err := Decode(input)
+	if err != nil {
+		t.Fatalf("Decode() error = %v, want nil", err)
+	}
+	if _, ok := cfg.Processes["first"]; !ok {
+		t.Fatal("Decode() first process missing")
+	}
+	if _, ok := cfg.Processes["second"]; ok {
+		t.Fatal("Decode() unexpectedly loaded the second document")
 	}
 }
 
