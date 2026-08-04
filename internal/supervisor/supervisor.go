@@ -41,6 +41,22 @@ type LogEntry struct {
 	Time   time.Time
 }
 
+// LogCursor identifies the next retained log position for incremental reads.
+type LogCursor uint64
+
+// LogBatch contains retained log changes after a cursor.
+type LogBatch struct {
+	// Entries contains new retained log entries, or the complete retained
+	// snapshot when Reset is true.
+	Entries []LogEntry
+	// Cursor is passed to the next LogsSince call.
+	Cursor LogCursor
+	// Retained is the current number of retained entries.
+	Retained int
+	// Reset reports that the caller must replace its existing cache.
+	Reset bool
+}
+
 type Supervisor struct {
 	cfg     *config.Config
 	options Options
@@ -294,6 +310,24 @@ func (s *Supervisor) Logs(name string) []LogEntry {
 	return runtime.logs.Items()
 }
 
+// LogsSince returns retained log changes after cursor.
+func (s *Supervisor) LogsSince(name string, cursor LogCursor) LogBatch {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	runtime := s.processes[name]
+	if runtime == nil {
+		return LogBatch{Reset: cursor != 0}
+	}
+	entries, next, retained, reset := runtime.logs.ItemsSince(uint64(cursor))
+	return LogBatch{
+		Entries:  entries,
+		Cursor:   LogCursor(next),
+		Retained: retained,
+		Reset:    reset,
+	}
+}
+
 func (s *Supervisor) startInitial(ctx context.Context) error {
 	layers, err := StartupLayers(s.deps)
 	if err != nil {
@@ -485,10 +519,15 @@ func (s *Supervisor) forwardLogs(name string, logs <-chan process.LogLine) {
 			Line:   line.Line,
 			Time:   line.Time,
 		}
+		var cursor LogCursor
+		retained := 0
 		s.mu.Lock()
 		runtime := s.processes[name]
 		if runtime != nil {
 			runtime.logs.Add(entry)
+			revision, count := runtime.logs.State()
+			cursor = LogCursor(revision)
+			retained = count
 		}
 		s.mu.Unlock()
 
@@ -496,11 +535,14 @@ func (s *Supervisor) forwardLogs(name string, logs <-chan process.LogLine) {
 			continue
 		}
 		s.emit(Event{
-			Kind:    EventProcessLogLine,
-			Process: name,
-			Stream:  entry.Stream,
-			Line:    entry.Line,
-			Time:    entry.Time,
+			Kind:          EventProcessLogLine,
+			Process:       name,
+			Stream:        entry.Stream,
+			Line:          entry.Line,
+			LogCursor:     cursor,
+			LogRetained:   retained,
+			LogStateValid: true,
+			Time:          entry.Time,
 		})
 	}
 }

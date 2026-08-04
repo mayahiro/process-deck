@@ -12,9 +12,16 @@ import (
 
 func Decode(r io.Reader) (*Config, error) {
 	var cfg Config
-	dec := yaml.NewDecoder(r)
-	dec.KnownFields(true)
-	if err := dec.Decode(&cfg); err != nil {
+	loader, err := yaml.NewLoader(
+		r,
+		yaml.WithKnownFields(),
+		yaml.WithUniqueKeys(),
+		yaml.WithSingleDocument(),
+	)
+	if err != nil {
+		return nil, err
+	}
+	if err := loader.Load(&cfg); err != nil {
 		return nil, err
 	}
 	return &cfg, nil

@@ -9,6 +9,8 @@ import (
 // EnvFiles is a list of environment files.
 type EnvFiles []string
 
+var _ yaml.Unmarshaler = (*EnvFiles)(nil)
+
 func (e *EnvFiles) UnmarshalYAML(node *yaml.Node) error {
 	switch node.Kind {
 	case yaml.ScalarNode:
