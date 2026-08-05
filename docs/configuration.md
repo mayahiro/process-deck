@@ -1,5 +1,7 @@
 # Configuration
 
+[日本語](configuration_ja.md)
+
 Process Deck reads a YAML config file that describes the local processes to supervise.
 
 When `--config` is not provided, Process Deck looks for the first matching file in the current working directory:
@@ -153,10 +155,14 @@ The parser intentionally supports a small dotenv subset:
 
 - Blank lines and lines beginning with `#` are ignored.
 - Lines without `=` are ignored.
-- Variable lines use `KEY=VALUE`.
+- Variable lines use `KEY=VALUE` or `export KEY=VALUE`.
 - Empty values such as `KEY=` are allowed.
 - Single-quoted and double-quoted values are unquoted.
-- Inline comments in unquoted values are supported when `#` is preceded by a space.
+- Inline comments in unquoted values are ignored when `#` is preceded by a space or tab, including `KEY= # comment`.
+- A `#` without preceding whitespace remains part of an unquoted value, as in `KEY=value#fragment`.
+- Comments after a closing quote are ignored.
+- An empty key or malformed quoted value is an error.
+- Shell syntax other than the optional `export` prefix is not evaluated.
 - Variable interpolation such as `${OTHER}` is not supported.
 
 `env_file` may also be written as a single string:

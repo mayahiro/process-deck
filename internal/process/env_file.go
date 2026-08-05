@@ -41,7 +41,7 @@ func parseEnvFile(r io.Reader, source string) ([]string, error) {
 }
 
 func parseEnvFileLine(line string) (string, bool, error) {
-	trimmed := strings.TrimSpace(line)
+	trimmed := stripEnvExportPrefix(strings.TrimSpace(line))
 	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 		return "", false, nil
 	}
@@ -59,19 +59,28 @@ func parseEnvFileLine(line string) (string, bool, error) {
 		return "", false, fmt.Errorf("key %q must not contain =", key)
 	}
 
-	value, err := parseEnvFileValue(strings.TrimSpace(value))
+	value, err := parseEnvFileValue(value)
 	if err != nil {
 		return "", false, err
 	}
 	return key + "=" + value, true, nil
 }
 
+func stripEnvExportPrefix(line string) string {
+	const keyword = "export"
+	if len(line) <= len(keyword) || !strings.HasPrefix(line, keyword) || !isEnvSpace(line[len(keyword)]) {
+		return line
+	}
+	return strings.TrimSpace(line[len(keyword):])
+}
+
 func parseEnvFileValue(value string) (string, error) {
-	if value == "" {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
 		return "", nil
 	}
-	if value[0] == '"' || value[0] == '\'' {
-		return parseQuotedEnvValue(value)
+	if trimmed[0] == '"' || trimmed[0] == '\'' {
+		return parseQuotedEnvValue(trimmed)
 	}
 	return strings.TrimSpace(stripEnvInlineComment(value)), nil
 }

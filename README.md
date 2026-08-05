@@ -1,5 +1,7 @@
 # Process Deck
 
+[日本語](README_ja.md)
+
 Process Deck is a lightweight YAML-based process supervisor with a built-in TUI for local development.
 
 It is designed for developers who want to start and monitor several local processes without introducing containers or a large orchestration layer.
@@ -62,7 +64,7 @@ Process Deck uses schema `version: 1`. Each process must define exactly one of `
 
 - `cmd` runs through `/bin/sh -c`.
 - `exec` runs an executable directly without shell expansion.
-- `env_file` loads one or more environment files relative to the process `cwd`. Only `KEY=VALUE` entries are applied.
+- `env_file` loads one or more environment files relative to the process `cwd`. Entries may use `KEY=VALUE` or `export KEY=VALUE`, with optional inline `#` comments.
 - `depends_on` waits for listed processes to reach the running state before starting the dependent process.
 - `restart` supports `no`, `on-failure`, and `always`.
 - `stop_signal` defaults to `TERM`.
@@ -106,15 +108,7 @@ Release builds write binaries to `tmp/` and embed the version shown by `procdeck
 
 ## Non-goals
 
-The MVP does not aim to provide full process-compose compatibility, container support, a REST API, server/client mode, namespaces, replicas, scheduled processes, dynamic config editing, health checks, interactive PTY input forwarding, log rotation, metrics, or daemonization.
-
-## Process Compose Comparison
-
-Process Compose is a broader process orchestration tool. Process Deck intentionally targets a smaller local development workflow:
-
-```text
-define processes -> start them -> see logs/status -> stop/restart safely
-```
+The MVP does not aim to provide container support, a REST API, server/client mode, namespaces, replicas, scheduled processes, dynamic config editing, health checks, interactive PTY input forwarding, log rotation, metrics, or daemonization.
 
 ## License
 
