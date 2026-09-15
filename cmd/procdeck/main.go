@@ -13,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/mayahiro/process-deck/internal/config"
+	"github.com/mayahiro/process-deck/internal/session"
 	"github.com/mayahiro/process-deck/internal/supervisor"
 	"github.com/mayahiro/process-deck/internal/tui"
 )
@@ -20,7 +21,13 @@ import (
 var version = "dev"
 
 func main() {
-	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+	var err error
+	if session.IsWorker(os.Args[1:]) {
+		err = session.RunWorker()
+	} else {
+		err = run(os.Args[1:], os.Stdout, os.Stderr)
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -67,38 +74,35 @@ func run(args []string, stdout io.Writer, stderr io.Writer) error {
 		configPath = path
 	}
 
-	cfg, err := config.LoadFile(configPath)
-	if err != nil {
-		return err
-	}
-	if err := cfg.Validate(); err != nil {
-		return err
-	}
-
-	deps := cfg.DependencyMap()
-	if err := supervisor.ValidateGraph(deps); err != nil {
-		return err
-	}
-
 	if dryRun {
+		cfg, err := config.LoadFile(configPath)
+		if err != nil {
+			return err
+		}
+		if err := cfg.Validate(); err != nil {
+			return err
+		}
+		deps := cfg.DependencyMap()
 		return printDryRun(stdout, configPath, cfg, deps)
 	}
-	if noTUI {
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer stop()
-
-		baseDir, err := os.Getwd()
-		if err != nil {
-			return fmt.Errorf("runtime error: failed to get working directory: %w", err)
-		}
-		return runHeadless(ctx, stdout, stderr, cfg, baseDir)
-	}
-
 	baseDir, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("runtime error: failed to get working directory: %w", err)
 	}
-	return tui.Run(cfg, baseDir)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	client, err := session.Open(configPath, baseDir, !noTUI)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	if client.Reattached() {
+		fmt.Fprintln(stderr, "Reattached to the existing session (using its original configuration and environment)")
+	}
+	if noTUI {
+		return runHeadless(ctx, stdout, stderr, client)
+	}
+	return tui.RunSession(ctx, client)
 }
 
 func printDryRun(w io.Writer, configPath string, cfg *config.Config, deps map[string][]string) error {
@@ -149,21 +153,33 @@ func flattenLayers(layers [][]string) []string {
 	return names
 }
 
-func runHeadless(ctx context.Context, stdout io.Writer, stderr io.Writer, cfg *config.Config, baseDir string) error {
-	sup, err := supervisor.New(cfg, supervisor.Options{BaseDir: baseDir})
-	if err != nil {
-		return err
-	}
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- sup.Run(ctx)
-	}()
-
-	for event := range sup.Events() {
+func runHeadless(ctx context.Context, stdout io.Writer, stderr io.Writer, client *session.Client) error {
+	cursors := make(map[string]supervisor.LogCursor)
+	for _, event := range client.History() {
 		printHeadlessEvent(stdout, stderr, event)
+		cursors[event.Process] = max(cursors[event.Process], event.LogCursor)
 	}
-	return <-errCh
+	stopping := ctx.Done()
+	for {
+		select {
+		case <-stopping:
+			stopping = nil
+			if err := client.Shutdown(); err != nil {
+				return err
+			}
+		case event, ok := <-client.Events():
+			if !ok {
+				return client.Wait()
+			}
+			if event.Kind == supervisor.EventProcessLogLine && event.LogStateValid && event.LogCursor != 0 {
+				if event.LogCursor <= cursors[event.Process] {
+					continue
+				}
+				cursors[event.Process] = event.LogCursor
+			}
+			printHeadlessEvent(stdout, stderr, event)
+		}
+	}
 }
 
 func printHeadlessEvent(stdout io.Writer, stderr io.Writer, event supervisor.Event) {

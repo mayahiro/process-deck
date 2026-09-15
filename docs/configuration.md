@@ -13,6 +13,8 @@ When `--config` is not provided, Process Deck looks for the first matching file 
 
 The current schema version is `1`.
 
+Normal startup reconnects to an existing session for the same working directory and config path, if one exists. That session keeps its original parsed configuration and inherited environment; the file is only loaded when creating a new session. `--dry-run` always validates the file currently on disk. See [Reconnecting after a crash](../README.md#reconnecting-after-a-crash) for session lifetime and recovery limits.
+
 ## Example
 
 ```yaml
@@ -231,7 +233,7 @@ Processes are started in their own process group. When a process is stopped, Pro
 
 ## Logs
 
-Process Deck captures stdout and stderr line by line. The TUI keeps an in-memory ring buffer per process. In `--no-tui` mode, log lines are written to stdout with the process name and stream.
+Process Deck captures stdout and stderr line by line. The background supervisor keeps an in-memory ring buffer per process, including while no client is attached. In `--no-tui` mode, log lines are written to stdout with the process name and stream. Reconnecting restores retained history up to `log_buffer_lines`; older lines and history with retention disabled cannot be recovered.
 
 When `pty: true` is enabled, stdout and stderr are connected to the same pseudo terminal and cannot be separated. Those log lines use the `pty` stream label.
 

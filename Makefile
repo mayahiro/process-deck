@@ -13,7 +13,7 @@ test:
 	go test ./...
 
 test-race:
-	go test -race ./internal/process ./internal/supervisor ./internal/tui
+	go test -race ./internal/process ./internal/supervisor ./internal/session ./internal/tui ./cmd/procdeck
 
 build:
 	mkdir -p $(BUILD_DIR)

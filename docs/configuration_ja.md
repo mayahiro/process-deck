@@ -13,6 +13,11 @@ Process Deck は監視対象のローカル process を記述した YAML 設定�
 
 現在の schema version は `1` です
 
+通常起動では、同じ作業ディレクトリと設定ファイルのパスに対応する既存セッションがあれば再接続します
+セッションは起動時に読み込んだ設定と継承環境を保持し、設定ファイルは新しいセッションを作るときだけ読み込みます
+`--dry-run` は常にディスク上の現在の設定ファイルを検証します
+セッションの終了条件と復元の制限は [クラッシュ後の再接続](../README_ja.md#クラッシュ後の再接続) を参照してください
+
 ## 例
 
 ```yaml
@@ -240,8 +245,9 @@ process を停止すると、Process Deck は process group へ `stop_signal` �
 ## Log
 
 Process Deck は stdout と stderr を行単位で取得します
-TUI は process ごとの memory ring buffer を保持します
+バックグラウンドの supervisor は client が接続していない間も process ごとの memory ring buffer を保持します
 `--no-tui` mode では、process 名と stream を付けて log 行を stdout へ出力します
+再接続では `log_buffer_lines` の範囲内で保持中の履歴を復元し、それ以前のログや保持を無効にした履歴は復元できません
 
 `pty: true` の場合、stdout と stderr は同じ pseudo terminal に接続されるため分離できません
 これらの log 行には `pty` stream label が付きます

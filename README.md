@@ -58,6 +58,25 @@ Run it without the TUI:
 go run ./cmd/procdeck --no-tui --config process-deck.yaml
 ```
 
+## Reconnecting after a crash
+
+Run the same command again from the same working directory with the same config file:
+
+```sh
+procdeck --config process-deck.yaml
+```
+
+Process Deck automatically reconnects to the existing session. A separate background supervisor owns the processes, output pipes, and PTYs, so a terminal client crash or `SIGKILL` does not lose process control. Process IDs, restart policies, and retained log history survive the client disconnect. Stop, start, and restart work after reconnection.
+
+- A session accepts one attached client at a time. A second client is rejected without starting duplicate processes.
+- Reconnection uses the session's original YAML configuration and inherited environment. Quit the session and start again to apply changes to them. As before, `env_file` contents are read whenever a managed process starts.
+- `q`, `Ctrl+C`, and `SIGTERM` stop all processes and end the session. Terminal errors or loss of the client connection leave it available for reconnection.
+- A session first started with `--no-tui` ends when all processes finish. A session first started with the TUI remains available until explicitly stopped, including while detached.
+- Log history is bounded by `log_buffer_lines`; `0` disables history recovery. Headless reconnection prints retained history before live output. Logs are kept in memory, not on disk.
+- Recovery requires the background supervisor to remain alive. Processes orphaned by older versions, a supervisor crash, or a system reboot cannot be reattached. If a supervisor crashes, startup reports a stale socket instead of starting duplicate processes. Stop any surviving processes before removing the reported socket and starting a new session.
+
+Sessions use an owner-only directory under `/tmp` and a local Unix socket. `--dry-run` validates the file on disk without starting or attaching to a session.
+
 ## Configuration
 
 Process Deck uses schema `version: 1`. Each process must define exactly one of `cmd` or `exec`.
@@ -108,7 +127,7 @@ Release builds write binaries to `tmp/` and embed the version shown by `procdeck
 
 ## Non-goals
 
-The MVP does not aim to provide container support, a REST API, server/client mode, namespaces, replicas, scheduled processes, dynamic config editing, health checks, interactive PTY input forwarding, log rotation, metrics, or daemonization.
+Process Deck does not aim to provide container support, a REST API, remote process management, namespaces, replicas, scheduled processes, dynamic config editing, health checks, interactive PTY input forwarding, log rotation, metrics, or a system service that starts on login or boot.
 
 ## License
 
