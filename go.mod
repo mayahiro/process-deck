@@ -3,8 +3,8 @@ module github.com/mayahiro/process-deck
 go 1.26.3
 
 require (
-	github.com/mayahiro/nagi-go v0.1.2
-	github.com/mayahiro/nagitui-go v0.1.4
+	github.com/mayahiro/nagi-go v0.4.0
+	github.com/mayahiro/nagitui-go v0.4.0
 	go.yaml.in/yaml/v4 v4.0.0-rc.6
 )
 

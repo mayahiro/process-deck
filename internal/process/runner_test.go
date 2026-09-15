@@ -88,7 +88,7 @@ func TestRunnerStopTerminatesProcessGroup(t *testing.T) {
 
 func TestRunnerLoadsEnvFilesFromCWD(t *testing.T) {
 	dir := t.TempDir()
-	writeTestFile(t, filepath.Join(dir, ".env"), "FOO=file\nBAR=file\n")
+	writeTestFile(t, filepath.Join(dir, ".env"), "FOO=file\nexport BAR=file # comment\n")
 	writeTestFile(t, filepath.Join(dir, ".env.local"), "FOO=local\n")
 
 	runner := NewRunner(Spec{
@@ -164,8 +164,67 @@ HASH=one#two
 	}
 }
 
+func TestParseEnvFileSupportsExportPrefixAndCommentSuffix(t *testing.T) {
+	input := strings.NewReader(`
+export EXPORTED=one
+export  SPACED=two # comment
+` + "export\tTABBED=three\n" + `
+UNQUOTED=hello world # comment
+QUOTED="hello # world" # comment
+SINGLE='literal # value'# comment
+EMPTY= # comment
+HASH=one#two
+HASH_ONLY=#fragment
+exported=value
+export=value
+`)
+	got, err := parseEnvFile(input, "test.env")
+	if err != nil {
+		t.Fatalf("parseEnvFile() error = %v, want nil", err)
+	}
+
+	want := []string{
+		"EXPORTED=one",
+		"SPACED=two",
+		"TABBED=three",
+		"UNQUOTED=hello world",
+		"QUOTED=hello # world",
+		"SINGLE=literal # value",
+		"EMPTY=",
+		"HASH=one#two",
+		"HASH_ONLY=#fragment",
+		"exported=value",
+		"export=value",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("parseEnvFile() = %#v, want %#v", got, want)
+	}
+}
+
+func TestParseEnvFileRejectsInvalidAssignments(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr string
+	}{
+		{name: "empty key", input: "=value\n", wantErr: "key must not be empty"},
+		{name: "empty exported key", input: "export =value\n", wantErr: "key must not be empty"},
+		{name: "unclosed quote", input: "KEY=\"value\n", wantErr: "quoted value is missing a closing quote"},
+		{name: "quoted trailing content", input: "KEY=\"value\" trailing\n", wantErr: "quoted value has unexpected trailing content"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := parseEnvFile(strings.NewReader(tt.input), "test.env")
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("parseEnvFile() error = %v, want error containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestParseEnvFileIgnoresNonAssignmentLines(t *testing.T) {
-	got, err := parseEnvFile(strings.NewReader("source_up\nsource_up .env\nFOO=bar\n"), "test.env")
+	got, err := parseEnvFile(strings.NewReader("source_up\nsource_up .env\nexport\nexport # comment\nexport # comment=ignored\nFOO=bar\n"), "test.env")
 	if err != nil {
 		t.Fatalf("parseEnvFile() error = %v, want nil", err)
 	}

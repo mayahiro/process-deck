@@ -1,5 +1,7 @@
 # Process Deck
 
+[日本語](README_ja.md)
+
 Process Deck is a lightweight YAML-based process supervisor with a built-in TUI for local development.
 
 It is designed for developers who want to start and monitor several local processes without introducing containers or a large orchestration layer.
@@ -56,18 +58,38 @@ Run it without the TUI:
 go run ./cmd/procdeck --no-tui --config process-deck.yaml
 ```
 
+## Reconnecting after a crash
+
+Run the same command again from the same working directory with the same config file:
+
+```sh
+procdeck --config process-deck.yaml
+```
+
+Process Deck automatically reconnects to the existing session. A separate background supervisor owns the processes, output pipes, and PTYs, so a terminal client crash or `SIGKILL` does not lose process control. Process IDs, restart policies, and retained log history survive the client disconnect. Stop, start, and restart work after reconnection.
+
+- A session accepts one attached client at a time. A second client is rejected without starting duplicate processes.
+- Reconnection uses the session's original YAML configuration and inherited environment. Quit the session and start again to apply changes to them. As before, `env_file` contents are read whenever a managed process starts.
+- Running sessions keep the supervisor version that started them. After upgrading `procdeck`, quit existing sessions and start new ones to apply runtime fixes.
+- `q`, `Ctrl+C`, and `SIGTERM` stop all processes and end the session. Terminal errors or loss of the client connection leave it available for reconnection.
+- A session first started with `--no-tui` ends when all processes finish. A session first started with the TUI remains available until explicitly stopped, including while detached.
+- Log history is bounded by `log_buffer_lines`; `0` disables history recovery. Headless reconnection prints retained history before live output. Logs are kept in memory, not on disk.
+- Recovery requires the background supervisor to remain alive. Processes orphaned by older versions, a supervisor crash, or a system reboot cannot be reattached. If a supervisor crashes, startup reports a stale socket instead of starting duplicate processes. Stop any surviving processes before removing the reported socket and starting a new session.
+
+Sessions use an owner-only directory under `/tmp` and a local Unix socket. `--dry-run` validates the file on disk without starting or attaching to a session.
+
 ## Configuration
 
 Process Deck uses schema `version: 1`. Each process must define exactly one of `cmd` or `exec`.
 
 - `cmd` runs through `/bin/sh -c`.
 - `exec` runs an executable directly without shell expansion.
-- `env_file` loads one or more environment files relative to the process `cwd`. Only `KEY=VALUE` entries are applied.
-- `depends_on` waits for listed processes to reach the running state before starting the dependent process.
+- `env_file` loads one or more environment files relative to the process `cwd`. Entries may use `KEY=VALUE` or `export KEY=VALUE`, with optional inline `#` comments.
+- `depends_on` waits for listed processes to reach the running state. Manual stops include all dependents; manual restarts restore previously active dependents in dependency order.
 - `restart` supports `no`, `on-failure`, and `always`.
 - `stop_signal` defaults to `TERM`.
 - `stop_timeout` defaults to `10s`.
-- `log_buffer_lines` controls how many in-memory log lines are retained per process. Set it to `0` to disable log retention.
+- `log_buffer_lines` controls how many in-memory log records are retained per process. Set it to `0` to disable log retention. Lines longer than 1 MiB are split into bounded records.
 - `pty` runs a process with a pseudo terminal. This helps TTY-aware tools emit color, but stdout and stderr are merged into the `pty` stream.
 
 Process Deck currently targets macOS.
@@ -93,9 +115,9 @@ Release builds write binaries to `tmp/` and embed the version shown by `procdeck
 |---|---|
 | `up` / `k` | Move selection up |
 | `down` / `j` | Move selection down |
-| `s` | Stop selected process |
+| `s` | Stop selected process and its dependents |
 | `a` | Start selected process |
-| `r` | Restart selected process |
+| `r` | Restart selected process and previously active dependents |
 | `f` | Toggle log follow |
 | `w` | Toggle log wrapping |
 | `pgup` / `pgdn` | Scroll logs by page |
@@ -104,17 +126,11 @@ Release builds write binaries to `tmp/` and embed the version shown by `procdeck
 | `left` / `right` | Scroll logs horizontally when wrapping is disabled |
 | `q` / `ctrl+c` | Quit and stop all processes |
 
+When the terminal reports `Super` (including Command) or `Hyper` modifiers, those key combinations do not trigger Process Deck shortcuts.
+
 ## Non-goals
 
-The MVP does not aim to provide full process-compose compatibility, container support, a REST API, server/client mode, namespaces, replicas, scheduled processes, dynamic config editing, health checks, interactive PTY input forwarding, log rotation, metrics, or daemonization.
-
-## Process Compose Comparison
-
-Process Compose is a broader process orchestration tool. Process Deck intentionally targets a smaller local development workflow:
-
-```text
-define processes -> start them -> see logs/status -> stop/restart safely
-```
+Process Deck does not aim to provide container support, a REST API, remote process management, namespaces, replicas, scheduled processes, dynamic config editing, health checks, interactive PTY input forwarding, log rotation, metrics, or a system service that starts on login or boot.
 
 ## License
 

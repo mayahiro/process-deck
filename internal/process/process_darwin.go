@@ -106,6 +106,19 @@ func killProcessGroup(pid int) error {
 	return syscall.Kill(-pid, syscall.SIGKILL)
 }
 
+func processGroupAlive(pid int) (bool, error) {
+	err := syscall.Kill(-pid, 0)
+	if isProcessDone(err) {
+		return false, nil
+	}
+	// Darwin also returns EPERM for a group containing only zombies. Keep
+	// checking until it disappears; EPERM alone never proves cleanup succeeded.
+	if errors.Is(err, syscall.EPERM) {
+		return true, nil
+	}
+	return err == nil, err
+}
+
 func isProcessDone(err error) bool {
 	return errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.ESRCH)
 }

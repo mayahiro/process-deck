@@ -1,10 +1,8 @@
 package process
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"sort"
@@ -13,6 +11,7 @@ import (
 	"time"
 )
 
+// Spec describes a command and the process group managed for its lifetime.
 type Spec struct {
 	Name        string
 	Cmd         string
@@ -25,41 +24,63 @@ type Spec struct {
 	PTY         bool
 }
 
+// LogLine is an output record, with long lines split at MaxLogLineBytes.
 type LogLine struct {
 	Stream string
 	Line   string
 	Time   time.Time
 }
 
+// Result reports the command's exit status after group cleanup and log drainage.
 type Result struct {
 	ExitCode int
 	Err      error
+	// SupervisionErr reports log capture or process group cleanup failures,
+	// independently of the command's exit status.
+	SupervisionErr error
 }
 
+// Run identifies a started command. Consume Logs until it closes before waiting
+// on Done, and continue consuming Logs while calling Stop.
 type Run struct {
 	PID  int
 	Logs <-chan LogLine
 	Done <-chan Result
 }
 
+// Runner owns one command, its process group, and its output readers.
+// Descendants must remain in the managed process group to be stopped with it.
 type Runner struct {
 	spec Spec
 
-	mu     sync.Mutex
-	cmd    *exec.Cmd
-	run    Run
-	exited chan struct{}
+	mu       sync.Mutex
+	cmd      *exec.Cmd
+	exited   chan struct{}
+	stopOnce sync.Once
+	stopErr  error
 }
 
+// NewRunner prepares a command without starting it.
 func NewRunner(spec Spec) *Runner {
 	return &Runner{spec: spec}
 }
 
+// Start launches the command once, using pipes or a PTY according to Spec.
 func (r *Runner) Start() (Run, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.cmd != nil {
+		return Run{}, fmt.Errorf("process has already been started")
+	}
 	if r.spec.PTY {
 		return r.startPTY()
 	}
 	return r.startPipes()
+}
+
+type processOutput struct {
+	file   *os.File
+	stream string
 }
 
 func (r *Runner) startPipes() (Run, error) {
@@ -69,51 +90,21 @@ func (r *Runner) startPipes() (Run, error) {
 	}
 	setPipeProcessGroup(cmd)
 
-	stdout, err := cmd.StdoutPipe()
+	// Own the read ends: Cmd.Wait must not close them before output is drained.
+	stdout, stdoutWriter, err := os.Pipe()
 	if err != nil {
 		return Run{}, fmt.Errorf("failed to open stdout pipe: %w", err)
 	}
-	stderr, err := cmd.StderrPipe()
+	defer stdoutWriter.Close()
+	stderr, stderrWriter, err := os.Pipe()
 	if err != nil {
+		_ = stdout.Close()
 		return Run{}, fmt.Errorf("failed to open stderr pipe: %w", err)
 	}
-	if err := cmd.Start(); err != nil {
-		return Run{}, err
-	}
-
-	logs := make(chan LogLine, 128)
-	done := make(chan Result, 1)
-	exited := make(chan struct{})
-	run := Run{
-		PID:  cmd.Process.Pid,
-		Logs: logs,
-		Done: done,
-	}
-
-	r.mu.Lock()
-	r.cmd = cmd
-	r.run = run
-	r.exited = exited
-	r.mu.Unlock()
-
-	var readers sync.WaitGroup
-	readers.Add(2)
-	go scanLines(&readers, stdout, "stdout", logs)
-	go scanLines(&readers, stderr, "stderr", logs)
-
-	go func() {
-		err := cmd.Wait()
-		readers.Wait()
-		close(logs)
-		done <- Result{
-			ExitCode: exitCode(cmd, err),
-			Err:      err,
-		}
-		close(done)
-		close(exited)
-	}()
-
-	return run, nil
+	defer stderrWriter.Close()
+	cmd.Stdout = stdoutWriter
+	cmd.Stderr = stderrWriter
+	return r.start(cmd, []processOutput{{stdout, "stdout"}, {stderr, "stderr"}})
 }
 
 func (r *Runner) startPTY() (Run, error) {
@@ -121,96 +112,130 @@ func (r *Runner) startPTY() (Run, error) {
 	if err != nil {
 		return Run{}, err
 	}
-
 	master, slave, err := openPTY()
 	if err != nil {
 		return Run{}, err
 	}
-
+	defer slave.Close()
 	setTTYProcessGroup(cmd)
 	cmd.Stdin = slave
 	cmd.Stdout = slave
 	cmd.Stderr = slave
+	return r.start(cmd, []processOutput{{master, "pty"}})
+}
 
+func (r *Runner) start(cmd *exec.Cmd, outputs []processOutput) (Run, error) {
 	if err := cmd.Start(); err != nil {
-		_ = master.Close()
-		_ = slave.Close()
+		for _, output := range outputs {
+			_ = output.file.Close()
+		}
 		return Run{}, err
 	}
-	_ = slave.Close()
-
 	logs := make(chan LogLine, 128)
 	done := make(chan Result, 1)
 	exited := make(chan struct{})
-	run := Run{
-		PID:  cmd.Process.Pid,
-		Logs: logs,
-		Done: done,
-	}
-
-	r.mu.Lock()
 	r.cmd = cmd
-	r.run = run
 	r.exited = exited
-	r.mu.Unlock()
 
-	var readers sync.WaitGroup
-	readers.Add(1)
-	go func() {
-		scanLines(&readers, master, "pty", logs)
-		_ = master.Close()
-	}()
-
+	readErrors := make(chan error, len(outputs))
+	for _, output := range outputs {
+		go func() {
+			err := scanLines(output.file, output.stream, logs)
+			_ = output.file.Close()
+			if err != nil {
+				err = fmt.Errorf("failed to read %s: %w", output.stream, err)
+			}
+			readErrors <- err
+		}()
+	}
 	go func() {
 		err := cmd.Wait()
-		readers.Wait()
-		close(logs)
-		done <- Result{
-			ExitCode: exitCode(cmd, err),
-			Err:      err,
+		// The leader may exit before its children, even during an explicit stop.
+		supervisionErr := r.stopGroup(cmd.Process.Pid)
+		if supervisionErr != nil {
+			for _, output := range outputs {
+				_ = output.file.Close()
+			}
 		}
+		for range outputs {
+			supervisionErr = errors.Join(supervisionErr, <-readErrors)
+		}
+		close(logs)
+		done <- Result{ExitCode: exitCode(cmd, err), Err: err, SupervisionErr: supervisionErr}
 		close(done)
 		close(exited)
 	}()
-
-	return run, nil
+	return Run{PID: cmd.Process.Pid, Logs: logs, Done: done}, nil
 }
 
+// Stop signals the whole process group, escalates to KILL after StopTimeout,
+// and waits for output drainage. It is safe to call concurrently or repeatedly.
 func (r *Runner) Stop() error {
 	r.mu.Lock()
-	cmd := r.cmd
-	exited := r.exited
+	cmd, exited := r.cmd, r.exited
 	r.mu.Unlock()
-
-	if cmd == nil || cmd.Process == nil || exited == nil {
+	if cmd == nil {
 		return nil
 	}
-
-	sig := r.spec.StopSignal
-	if sig == nil {
-		sig = defaultStopSignal()
-	}
-	if err := signalProcessGroup(cmd.Process.Pid, sig); err != nil && !isProcessDone(err) {
+	if err := r.stopGroup(cmd.Process.Pid); err != nil {
 		return err
 	}
+	<-exited
+	return nil
+}
 
-	timeout := r.spec.StopTimeout
-	if timeout <= 0 {
-		timeout = 10 * time.Second
-	}
+func (r *Runner) stopGroup(pid int) error {
+	r.stopOnce.Do(func() {
+		sig := r.spec.StopSignal
+		if sig == nil {
+			sig = defaultStopSignal()
+		}
+		if err := signalProcessGroup(pid, sig); err != nil && !errors.Is(err, os.ErrPermission) {
+			if !isProcessDone(err) {
+				r.stopErr = err
+			}
+			return
+		}
+		timeout := r.spec.StopTimeout
+		if timeout <= 0 {
+			timeout = 10 * time.Second
+		}
+		gone, err := waitForProcessGroup(pid, timeout)
+		if err != nil || gone {
+			r.stopErr = err
+			return
+		}
+		killErr := killProcessGroup(pid)
+		if killErr != nil && !isProcessDone(killErr) && !errors.Is(killErr, os.ErrPermission) {
+			r.stopErr = killErr
+			return
+		}
+		// Bound the wait even if the OS cannot immediately complete SIGKILL.
+		gone, err = waitForProcessGroup(pid, 5*time.Second)
+		if err != nil {
+			r.stopErr = err
+		} else if !gone {
+			r.stopErr = errors.Join(fmt.Errorf("process group %d did not exit after KILL", pid), killErr)
+		}
+	})
+	return r.stopErr
+}
 
+func waitForProcessGroup(pid int, timeout time.Duration) (bool, error) {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
-
-	select {
-	case <-exited:
-		return nil
-	case <-timer.C:
-		if err := killProcessGroup(cmd.Process.Pid); err != nil && !isProcessDone(err) {
-			return err
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		alive, err := processGroupAlive(pid)
+		if err != nil || !alive {
+			return !alive, err
 		}
-		<-exited
-		return nil
+		select {
+		case <-timer.C:
+			return false, nil
+		case <-ticker.C:
+		}
 	}
 }
 
@@ -255,21 +280,6 @@ func buildEnv(cwd string, envFiles []string, env map[string]string) ([]string, e
 		values = append(values, key+"="+env[key])
 	}
 	return values, nil
-}
-
-func scanLines(wg *sync.WaitGroup, r io.Reader, stream string, logs chan<- LogLine) {
-	defer wg.Done()
-
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		line := strings.TrimSuffix(scanner.Text(), "\r")
-		logs <- LogLine{
-			Stream: stream,
-			Line:   line,
-			Time:   time.Now(),
-		}
-	}
 }
 
 func exitCode(cmd *exec.Cmd, err error) int {

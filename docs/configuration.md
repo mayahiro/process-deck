@@ -1,5 +1,7 @@
 # Configuration
 
+[日本語](configuration_ja.md)
+
 Process Deck reads a YAML config file that describes the local processes to supervise.
 
 When `--config` is not provided, Process Deck looks for the first matching file in the current working directory:
@@ -10,6 +12,8 @@ When `--config` is not provided, Process Deck looks for the first matching file 
 4. `procdeck.yml`
 
 The current schema version is `1`.
+
+Normal startup reconnects to an existing session for the same working directory and config path, if one exists. That session keeps its original parsed configuration and inherited environment; the file is only loaded when creating a new session. `--dry-run` always validates the file currently on disk. See [Reconnecting after a crash](../README.md#reconnecting-after-a-crash) for session lifetime and recovery limits.
 
 ## Example
 
@@ -153,10 +157,14 @@ The parser intentionally supports a small dotenv subset:
 
 - Blank lines and lines beginning with `#` are ignored.
 - Lines without `=` are ignored.
-- Variable lines use `KEY=VALUE`.
+- Variable lines use `KEY=VALUE` or `export KEY=VALUE`.
 - Empty values such as `KEY=` are allowed.
 - Single-quoted and double-quoted values are unquoted.
-- Inline comments in unquoted values are supported when `#` is preceded by a space.
+- Inline comments in unquoted values are ignored when `#` is preceded by a space or tab, including `KEY= # comment`.
+- A `#` without preceding whitespace remains part of an unquoted value, as in `KEY=value#fragment`.
+- Comments after a closing quote are ignored.
+- An empty key or malformed quoted value is an error.
+- Shell syntax other than the optional `export` prefix is not evaluated.
 - Variable interpolation such as `${OTHER}` is not supported.
 
 `env_file` may also be written as a single string:
@@ -201,11 +209,15 @@ processes:
 
 ## Dependencies
 
-`depends_on` defines startup ordering only.
+`depends_on` defines startup ordering and the scope of manual stop and restart operations. It does not perform health checks.
 
 Process Deck validates that dependencies reference known processes, do not point to the process itself, do not contain duplicates, and do not form cycles.
 
-A dependent process starts after all listed dependencies reach `running`. If a dependency fails before the dependent process starts, the dependent process is skipped. Stopping a process also stops processes that depend on it.
+A dependent process starts after all listed dependencies reach `running`. A dependency that cannot be launched causes its dependents to be skipped. Reaching `running` is a launch milestone, so a one-shot command may finish before its dependents start. Natural exits and automatic restarts do not stop or restart dependents.
+
+Manually stopping a process also stops all direct and indirect dependents, in reverse dependency order, and cancels their pending automatic restarts. A manual start starts only the selected process; dependencies that were manually stopped must be started first.
+
+A manual restart stops the process and its dependents, then starts the selected process and previously active dependents in dependency order. Dependents that were already stopped remain stopped. If a dependency cannot restart, its dependents remain stopped and an error is reported.
 
 ## Restart policy
 
@@ -215,17 +227,23 @@ A dependent process starts after all listed dependencies reach `running`. If a d
 | `on-failure` | Restart only when the exit code is non-zero. |
 | `always` | Restart after any exit. |
 
-Manual stops suppress automatic restart.
+Manual stops suppress automatic restart, including a restart already waiting for `backoff`. A manual start or restart during `backoff` replaces the pending automatic restart with one immediate launch.
 
 ## Stopping processes
 
 Process Deck currently targets macOS.
 
-Processes are started in their own process group. When a process is stopped, Process Deck sends `stop_signal` to the process group, waits for `stop_timeout`, then sends `KILL` if the process group is still running.
+Processes are started in their own process group. When a process is stopped, Process Deck sends `stop_signal` to the process group and waits up to `stop_timeout`, then sends `KILL` if the group still exists. The leader exiting does not complete the stop while descendants remain. When a leader exits naturally, the same cleanup applies to remaining group members before its exit is reported.
+
+Commands should stay in the foreground, and descendants must remain in the managed process group. Children that create a separate session or process group are outside this cleanup scope.
+
+Quit requests are accepted while a manual stop is in progress. The client then waits for group cleanup and output drainage to finish; `stop_timeout` is the grace period before `KILL`, not a deadline for the entire session to exit.
 
 ## Logs
 
-Process Deck captures stdout and stderr line by line. The TUI keeps an in-memory ring buffer per process. In `--no-tui` mode, log lines are written to stdout with the process name and stream.
+Process Deck captures stdout and stderr line by line. The background supervisor keeps an in-memory ring buffer per process, including while no client is attached. In `--no-tui` mode, log lines are written to stdout with the process name and stream. Reconnecting restores retained history up to `log_buffer_lines`; older lines and history with retention disabled cannot be recovered.
+
+Output already written to pipes is drained before process exit is reported. Logical lines longer than 1 MiB are split into consecutive log records of at most 1 MiB, preserving valid UTF-8 characters and continuing to read subsequent output. Each fragment counts toward `log_buffer_lines` and receives the usual stream label. Log capture errors are reported as supervisor errors.
 
 When `pty: true` is enabled, stdout and stderr are connected to the same pseudo terminal and cannot be separated. Those log lines use the `pty` stream label.
 
