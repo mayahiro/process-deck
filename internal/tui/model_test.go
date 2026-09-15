@@ -685,6 +685,63 @@ func TestMessageForEventMapsControlKeys(t *testing.T) {
 	}
 }
 
+func TestMessageForEventMapsKittyKeys(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		action userAction
+	}{
+		{name: "quit", input: "\x1b[113u", action: actionQuit},
+		{name: "stop", input: "\x1b[115u", action: actionStopProcess},
+		{name: "start", input: "\x1b[97u", action: actionStartProcess},
+		{name: "restart", input: "\x1b[114u", action: actionRestartProcess},
+		{name: "control c", input: "\x1b[99;5u", action: actionQuit},
+		{name: "control u", input: "\x1b[117;5u", action: actionLogHalfPageUp},
+		{name: "control d", input: "\x1b[100;5u", action: actionLogHalfPageDown},
+		{name: "down", input: "\x1b[1;1:1B", action: actionSelectNext},
+		{name: "repeated navigation", input: "\x1b[106;1:2u", action: actionSelectNext},
+		{name: "caps lock", input: "\x1b[113;65u", action: actionQuit},
+		{name: "num lock", input: "\x1b[106;129u", action: actionSelectNext},
+		{name: "control with locks", input: "\x1b[117;197u", action: actionLogHalfPageUp},
+		{name: "released quit", input: "\x1b[113;1:3u"},
+		{name: "released restart", input: "\x1b[114;1:3u"},
+		{name: "alt quit", input: "\x1b[113;3u"},
+		{name: "meta quit", input: "\x1b[113;33u"},
+		{name: "super quit", input: "\x1b[113;9u"},
+		{name: "hyper quit", input: "\x1b[113;17u"},
+		{name: "super stop", input: "\x1b[115;9u"},
+		{name: "hyper stop", input: "\x1b[115;17u"},
+		{name: "super start", input: "\x1b[97;9u"},
+		{name: "hyper start", input: "\x1b[97;17u"},
+		{name: "super restart", input: "\x1b[114;9u"},
+		{name: "hyper restart", input: "\x1b[114;17u"},
+		{name: "super control c", input: "\x1b[99;13u"},
+		{name: "hyper control c", input: "\x1b[99;21u"},
+		{name: "super control u", input: "\x1b[117;13u"},
+		{name: "hyper control d", input: "\x1b[100;21u"},
+		{name: "super down", input: "\x1b[1;9:1B"},
+		{name: "hyper down", input: "\x1b[1;17:1B"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			events := vt.NewDecoder().Feed([]byte(test.input))
+			if len(events) != 1 || events[0].Kind != vt.EventKey || events[0].Key.Protocol != vt.KeyProtocolKitty {
+				t.Fatalf("decoded Kitty input = %+v, want one key event", events)
+			}
+			msg, ok := messageForEvent(events[0])
+			if test.action == actionNone {
+				if ok {
+					t.Fatalf("messageForEvent() = %+v, want ignored key", msg)
+				}
+				return
+			}
+			if !ok || msg.kind != messageAction || msg.action != test.action {
+				t.Fatalf("messageForEvent() = %+v, %t, want action %d", msg, ok, test.action)
+			}
+		})
+	}
+}
+
 func TestTerminalStatusHelpers(t *testing.T) {
 	m := model{
 		snapshots: []supervisor.Snapshot{

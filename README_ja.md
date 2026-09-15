@@ -130,6 +130,8 @@ release build は binary を `tmp/` に出力し、`procdeck --version` が表�
 | `left` / `right` | wrap 無効時に log を水平方向へ scroll |
 | `q` / `ctrl+c` | 終了して全 process を停止 |
 
+terminal が `Super`（Command を含む）または `Hyper` 修飾キーを通知した場合、そのキーの組み合わせでは Process Deck のショートカットを実行しません
+
 ## 対象外
 
 Process Deck では container 対応、REST API、remote process management、namespace、replica、scheduled process、動的な設定編集、health check、対話的な PTY input forwarding、log rotation、metrics、ログインやOS起動時に開始する system service を対象としません

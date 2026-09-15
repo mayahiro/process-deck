@@ -126,6 +126,8 @@ Release builds write binaries to `tmp/` and embed the version shown by `procdeck
 | `left` / `right` | Scroll logs horizontally when wrapping is disabled |
 | `q` / `ctrl+c` | Quit and stop all processes |
 
+When the terminal reports `Super` (including Command) or `Hyper` modifiers, those key combinations do not trigger Process Deck shortcuts.
+
 ## Non-goals
 
 Process Deck does not aim to provide container support, a REST API, remote process management, namespaces, replicas, scheduled processes, dynamic config editing, health checks, interactive PTY input forwarding, log rotation, metrics, or a system service that starts on login or boot.

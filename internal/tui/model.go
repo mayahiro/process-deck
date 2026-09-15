@@ -289,7 +289,10 @@ func messageForEvent(event vt.Event) (appMessage, bool) {
 	}
 
 	modifiers := event.Key.Modifiers
-	if event.Key.Code == vt.KeyCharacter && modifiers.Control && !modifiers.Alt && !modifiers.Meta {
+	if modifiers.Alt || modifiers.Meta || modifiers.Super || modifiers.Hyper {
+		return appMessage{}, false
+	}
+	if event.Key.Code == vt.KeyCharacter && modifiers.Control {
 		switch event.Key.Character {
 		case 'c':
 			return actionMessage(actionQuit), true
@@ -299,7 +302,7 @@ func messageForEvent(event vt.Event) (appMessage, bool) {
 			return actionMessage(actionLogHalfPageDown), true
 		}
 	}
-	if modifiers.Alt || modifiers.Control || modifiers.Meta {
+	if modifiers.Control {
 		return appMessage{}, false
 	}
 	if event.Key.Code == vt.KeyCharacter {
