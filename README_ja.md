@@ -72,6 +72,7 @@ client の切断後も PID、再起動ポリシー、保持中のログ履歴が
 
 - 同時に接続できる client は1つで、2つ目の client は process を重複起動せずエラーになります
 - 再接続ではセッション起動時の YAML 設定と継承環境を使い、それらの変更を反映するにはセッションを終了して起動し直します。従来どおり、`env_file` の内容は managed process の起動時に読み込みます
+- 稼働中のセッションは開始時の supervisor のバージョンを使い続けます。`procdeck` を更新した後は、既存のセッションを終了して新しく起動すると修正が反映されます
 - `q`、`Ctrl+C`、`SIGTERM` は全 process を停止してセッションを終了します。terminal error や client 接続の消失では、再接続できる状態を維持します
 - 最初に `--no-tui` で起動したセッションは全 process の終了時に終了し、最初に TUI で起動したセッションは切断中も含めて明示的に停止するまで残ります
 - ログ履歴は `log_buffer_lines` の範囲で保持し、`0` では履歴を復元しません。headless で再接続すると保持中の履歴を出力してから新しいログを表示します。ログはメモリ上に保持し、ディスクには保存しません
@@ -88,11 +89,11 @@ Process Deck は schema `version: 1` を使用します
 - `cmd` は `/bin/sh -c` を通して実行されます
 - `exec` は shell expansion を行わず executable を直接実行します
 - `env_file` は process の `cwd` を基準に1つ以上の environment file を読み込み、entry は `KEY=VALUE` または `export KEY=VALUE` を使用でき、省略可能な inline `#` comment を記載できます
-- `depends_on` は指定された process が `running` になるまで依存 process の起動を待機します
+- `depends_on` は指定された process が `running` になるまで依存 process の起動を待機します。手動停止は依存する全 process も停止し、手動再起動は操作前に稼働していた依存 process を依存順に復帰させます
 - `restart` は `no`、`on-failure`、`always` に対応します
 - `stop_signal` の既定値は `TERM` です
 - `stop_timeout` の既定値は `10s` です
-- `log_buffer_lines` は memory に保持する process ごとの log 行数を指定し、`0` で保持を無効化します
+- `log_buffer_lines` は memory に保持する process ごとの log record 数を指定し、`0` で保持を無効化します。1 MiBを超える行はサイズを制限した record へ分割します
 - `pty` は pseudo terminal で process を実行し、TTY 対応 tool が色を出力する場合に役立ちますが、stdout と stderr は `pty` stream に統合されます
 
 Process Deck は現在 macOS を対象としています
@@ -118,9 +119,9 @@ release build は binary を `tmp/` に出力し、`procdeck --version` が表�
 |---|---|
 | `up` / `k` | 選択を上へ移動 |
 | `down` / `j` | 選択を下へ移動 |
-| `s` | 選択中の process を停止 |
+| `s` | 選択中の process と依存する process を停止 |
 | `a` | 選択中の process を起動 |
-| `r` | 選択中の process を再起動 |
+| `r` | 選択中の process と操作前に稼働していた依存 process を再起動 |
 | `f` | log follow を切替 |
 | `w` | log wrap を切替 |
 | `pgup` / `pgdn` | log を1 page scroll |

@@ -141,19 +141,22 @@ func (c *Client) StartProcess(name string) error {
 	return err
 }
 
-// StopProcess stops a process group using its configured signal and timeout.
+// StopProcess stops a process and its transitive dependents, cancelling their
+// automatic restarts. Dependents are stopped first.
 func (c *Client) StopProcess(name string) error {
 	_, err := c.call(request{Method: "stop", Process: name})
 	return err
 }
 
-// RestartProcess stops and then starts a process in the existing session.
+// RestartProcess restarts a process and its previously active dependents in
+// dependency order. Dependents that were already stopped remain stopped.
 func (c *Client) RestartProcess(name string) error {
 	_, err := c.call(request{Method: "restart", Process: name})
 	return err
 }
 
-// Shutdown requests graceful termination of all processes and the session.
+// Shutdown requests graceful termination of all processes and the session,
+// acknowledging the request without waiting for pending stops to finish.
 // Continue draining Events and call Wait to observe completion.
 func (c *Client) Shutdown() error {
 	_, err := c.call(request{Method: "shutdown"})

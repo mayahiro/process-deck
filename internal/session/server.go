@@ -134,9 +134,9 @@ func (s *server) handle(conn net.Conn) {
 	case "logs":
 		reply.Logs = s.sup.LogsSince(req.Process, req.Cursor)
 	case "shutdown":
-		s.commands.Lock()
+		// Acknowledge cancellation even while a manual stop is waiting for its
+		// timeout. Completion is delivered separately on the attachment stream.
 		s.cancel()
-		s.commands.Unlock()
 	case "start", "stop", "restart":
 		// Serialize manual commands; the event stream stays independent so a
 		// stop can continue to drain process output while waiting for exit.

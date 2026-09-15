@@ -70,6 +70,7 @@ Process Deck automatically reconnects to the existing session. A separate backgr
 
 - A session accepts one attached client at a time. A second client is rejected without starting duplicate processes.
 - Reconnection uses the session's original YAML configuration and inherited environment. Quit the session and start again to apply changes to them. As before, `env_file` contents are read whenever a managed process starts.
+- Running sessions keep the supervisor version that started them. After upgrading `procdeck`, quit existing sessions and start new ones to apply runtime fixes.
 - `q`, `Ctrl+C`, and `SIGTERM` stop all processes and end the session. Terminal errors or loss of the client connection leave it available for reconnection.
 - A session first started with `--no-tui` ends when all processes finish. A session first started with the TUI remains available until explicitly stopped, including while detached.
 - Log history is bounded by `log_buffer_lines`; `0` disables history recovery. Headless reconnection prints retained history before live output. Logs are kept in memory, not on disk.
@@ -84,11 +85,11 @@ Process Deck uses schema `version: 1`. Each process must define exactly one of `
 - `cmd` runs through `/bin/sh -c`.
 - `exec` runs an executable directly without shell expansion.
 - `env_file` loads one or more environment files relative to the process `cwd`. Entries may use `KEY=VALUE` or `export KEY=VALUE`, with optional inline `#` comments.
-- `depends_on` waits for listed processes to reach the running state before starting the dependent process.
+- `depends_on` waits for listed processes to reach the running state. Manual stops include all dependents; manual restarts restore previously active dependents in dependency order.
 - `restart` supports `no`, `on-failure`, and `always`.
 - `stop_signal` defaults to `TERM`.
 - `stop_timeout` defaults to `10s`.
-- `log_buffer_lines` controls how many in-memory log lines are retained per process. Set it to `0` to disable log retention.
+- `log_buffer_lines` controls how many in-memory log records are retained per process. Set it to `0` to disable log retention. Lines longer than 1 MiB are split into bounded records.
 - `pty` runs a process with a pseudo terminal. This helps TTY-aware tools emit color, but stdout and stderr are merged into the `pty` stream.
 
 Process Deck currently targets macOS.
@@ -114,9 +115,9 @@ Release builds write binaries to `tmp/` and embed the version shown by `procdeck
 |---|---|
 | `up` / `k` | Move selection up |
 | `down` / `j` | Move selection down |
-| `s` | Stop selected process |
+| `s` | Stop selected process and its dependents |
 | `a` | Start selected process |
-| `r` | Restart selected process |
+| `r` | Restart selected process and previously active dependents |
 | `f` | Toggle log follow |
 | `w` | Toggle log wrapping |
 | `pgup` / `pgdn` | Scroll logs by page |

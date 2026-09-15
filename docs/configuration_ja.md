@@ -217,13 +217,22 @@ processes:
 
 ## 依存関係
 
-`depends_on` は起動順だけを定義します
+`depends_on` は起動順と、手動停止・再起動の対象範囲を定義します
+health check は行いません
 
 Process Deck は依存先が既知の process を参照していること、自分自身を参照していないこと、重複がないこと、cycle がないことを検証します
 
 依存 process は、指定された全依存先が `running` になった後で起動します
-依存先が起動前に失敗した場合、依存 process は skip されます
-process を停止すると、その process に依存する process も停止します
+依存先を起動できなかった場合、依存 process は skip されます
+`running` は起動できたことを示すため、一度だけ実行する command は依存 process の起動前に終了することがあります
+自然終了や自動再起動では、依存する process の停止・再起動は行いません
+
+process を手動停止すると、直接・間接的に依存する全 process を依存順の逆順で停止し、待機中の自動再起動も取り消します
+手動起動は選択中の process だけを起動するため、手動停止した依存先は先に起動する必要があります
+
+手動再起動では、選択中の process と依存する process を停止した後、選択中の process と操作前に稼働していた依存 process を依存順に起動します
+操作前から停止していた依存 process は停止状態を維持します
+依存先を再起動できなかった場合、依存 process は停止したままとなり、エラーを表示します
 
 ## Restart policy
 
@@ -233,14 +242,24 @@ process を停止すると、その process に依存する process も停止し
 | `on-failure` | exit code が0以外の場合だけ再起動 |
 | `always` | 終了時に常に再起動 |
 
-手動停止では自動再起動を行いません
+手動停止では自動再起動を行わず、`backoff` の待機中だった再起動も取り消します
+`backoff` 中に手動起動・再起動すると、待機中の自動再起動を取り消して1回だけ即時起動します
 
 ## Process の停止
 
 Process Deck は現在 macOS を対象としています
 
 process は個別の process group で起動されます
-process を停止すると、Process Deck は process group へ `stop_signal` を送り、`stop_timeout` の間待機してから、process group が動作中であれば `KILL` を送ります
+process を停止すると、Process Deck は process group へ `stop_signal` を送り、最大 `stop_timeout` 待機してから、group が残っていれば `KILL` を送ります
+親 process が終了しても、配下の process が残っていれば停止完了にはしません
+親 process が自然終了した場合も、同じ手順で group 内の残存 process を停止してから終了を通知します
+
+command は foreground で動作させ、配下の process も管理対象の process group 内にとどめてください
+別の session や process group を作る子 process は、この停止処理の対象外です
+
+手動停止の途中でも終了要求を受け付けます
+その後、client は group の停止と出力の読み取り完了を待ちます
+`stop_timeout` は `KILL` までの猶予時間であり、session 全体の終了期限ではありません
 
 ## Log
 
@@ -248,6 +267,11 @@ Process Deck は stdout と stderr を行単位で取得します
 バックグラウンドの supervisor は client が接続していない間も process ごとの memory ring buffer を保持します
 `--no-tui` mode では、process 名と stream を付けて log 行を stdout へ出力します
 再接続では `log_buffer_lines` の範囲内で保持中の履歴を復元し、それ以前のログや保持を無効にした履歴は復元できません
+
+pipe に書き込まれた出力は、読み取りを完了してから process の終了を通知します
+1 MiBを超える論理行は、有効な UTF-8 文字を分断せずに最大1 MiBの連続した log record へ分割し、後続の出力も読み取り続けます
+各断片は `log_buffer_lines` の1行として数え、通常の stream label を付けます
+log の取得エラーは supervisor error として通知します
 
 `pty: true` の場合、stdout と stderr は同じ pseudo terminal に接続されるため分離できません
 これらの log 行には `pty` stream label が付きます

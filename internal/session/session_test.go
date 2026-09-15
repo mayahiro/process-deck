@@ -337,6 +337,41 @@ func TestProtocolMismatchIsRejected(t *testing.T) {
 	shutdown(t, client)
 }
 
+func TestShutdownAcknowledgesWhileManualStopIsPending(t *testing.T) {
+	dir, socket := testLocation(t)
+	path := writeConfig(t, dir, `version: 1
+processes:
+  worker:
+    cmd: "trap '' TERM; echo ready; while :; do sleep 1; done"
+    stop_timeout: 6s
+`)
+	client := openTestClient(t, socket, path, dir, true)
+	awaitEvent(t, client, func(event supervisor.Event) bool {
+		return event.Kind == supervisor.EventProcessLogLine && event.Line == "ready"
+	})
+	stopResult := make(chan error, 1)
+	go func() { stopResult <- client.StopProcess("worker") }()
+	awaitSnapshot(t, client, func(snapshot supervisor.Snapshot) bool { return snapshot.State == supervisor.StateStopping })
+	started := time.Now()
+	if err := client.Shutdown(); err != nil {
+		t.Fatalf("shutdown acknowledgment: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("shutdown acknowledgment waited for a pending stop: %s", elapsed)
+	}
+	for range client.Events() {
+	}
+	if err := client.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-stopResult; err != nil {
+		t.Fatalf("manual stop: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed < 5*time.Second {
+		t.Fatalf("session ended before the configured stop timeout: %s", elapsed)
+	}
+}
+
 func testLocation(t *testing.T) (string, string) {
 	t.Helper()
 	dir, err := os.MkdirTemp("/tmp", "pd-session-test-")

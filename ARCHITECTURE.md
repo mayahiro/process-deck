@@ -25,6 +25,14 @@ This boundary keeps process control, PTY ownership, exit status collection, auto
 
 The worker always drains supervisor events, including when detached. Attached clients receive ordered events through bounded queues. Output bursts apply backpressure; a disconnected client or an expired socket write deadline releases that pressure. Reattachment restores only the history still retained by the supervisor.
 
+## Lifecycle coordination
+
+The supervisor serializes launches and manual lifecycle operations, while log collection and exit observation remain independent. Each run has a generation and a cancellable restart reservation, preventing old backoff timers from replacing a manually started process. Manual stops cancel reservations across the affected dependency graph before waiting for groups to exit; manual restarts restore only previously active dependents.
+
+The process runner owns pipe read ends independently of `exec.Cmd`, drains output after the leader exits, and cleans up the entire process group. Log records are bounded to 1 MiB, splitting long lines while preserving valid UTF-8. Commands and descendants are expected to remain in their managed group.
+
+Session shutdown acknowledges cancellation without waiting for the manual-command lock. The existing event stream reports final completion after group cleanup and log drainage.
+
 ## Lifetime and isolation
 
 A lock inherited by the worker prevents competing launches from starting duplicate processes. The lock file remains after normal shutdown so concurrent openers cannot lock different files at the same path. An abandoned socket with no lock owner is treated as an unavailable supervisor, requiring cleanup of surviving processes before another session can start.
